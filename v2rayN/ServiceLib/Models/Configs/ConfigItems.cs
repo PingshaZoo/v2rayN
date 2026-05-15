@@ -276,3 +276,30 @@ public class SimpleDNSItem
     public string? Hosts { get; set; }
     public string? DirectExpectedIPs { get; set; }
 }
+
+[Serializable]
+public class CfBestIpItem
+{
+    public List<string> PostUrls { get; set; } = [];
+    public string DomainsSetUrl { get; set; }
+    public List<string> HavePostRes { get; set; } = [];
+    public List<string> IpSetUrls { get; set; } = [];
+    public int SleepInterval { get; set; } = 1;
+    public int Timeout { get; set; } = 2;
+    public int ProbeRepeat { get; set; } = 2;
+    public int ProgInterval { get; set; } = 10;
+    public int TopN { get; set; } = 10;
+    public int LowestSpeed { get; set; } = 1000;
+    public double WeightLatency { get; set; } = 1;
+    public double WeightLoss { get; set; } = 1;
+    public double LossPenaltyMs { get; set; } = 3000;
+    public string ProbeMode { get; set; } = "full";
+    public List<string> OriginSniList { get; set; } = [];
+    public string OriginTestPath { get; set; }
+    public string OriginSpeedTestPath { get; set; }
+    public bool OriginVerifyCert { get; set; }
+    public List<string> CfDefaultIpv4Cidrs { get; set; } = [];
+    public string SelectedProtocol { get; set; } = "vless";
+    public string Uuid { get; set; } = string.Empty;
+    public string WsPath { get; set; } = "/";
+}

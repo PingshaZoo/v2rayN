@@ -238,6 +238,23 @@
                         <Separator />
                         <Menu Margin="0,1" Style="{StaticResource ToolbarMenu}">
                             <MenuItem
+                                x:Name="menuCloudflareBestIp"
+                                Padding="{StaticResource MarginLeftRight8}"
+                                AutomationProperties.Name="{x:Static resx:ResUI.menuCloudflareBestIp}">
+                                <MenuItem.Header>
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon
+                                            Margin="{StaticResource MarginRight8}"
+                                            VerticalAlignment="Center"
+                                            Kind="CloudSearchOutline" />
+                                        <TextBlock Text="{x:Static resx:ResUI.menuCloudflareBestIp}" />
+                                    </StackPanel>
+                                </MenuItem.Header>
+                            </MenuItem>
+                        </Menu>
+                        <Separator />
+                        <Menu Margin="0,1" Style="{StaticResource ToolbarMenu}">
+                            <MenuItem
                                 x:Name="menuHelp"
                                 Padding="{StaticResource MarginLeftRight8}"
                                 AutomationProperties.Name="{x:Static resx:ResUI.menuHelp}">

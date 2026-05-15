@@ -1728,4 +1728,79 @@
   <data name="menuExport2InnerUri" xml:space="preserve">
     <value>导出 v2rayN 内部分享链接至剪贴板 (多选)</value>
   </data>
+  <data name="menuCloudflareBestIp" xml:space="preserve">
+    <value>Cloudflare优选</value>
+  </data>
+  <data name="TbCfBestIpSettings" xml:space="preserve">
+    <value>Cloudflare优选设置</value>
+  </data>
+  <data name="TbCfBestIpPostUrls" xml:space="preserve">
+    <value>上报地址列表</value>
+  </data>
+  <data name="TbCfBestIpDomainsSetUrl" xml:space="preserve">
+    <value>域名列表API</value>
+  </data>
+  <data name="TbCfBestIpHavePostRes" xml:space="preserve">
+    <value>历史优结果地址</value>
+  </data>
+  <data name="TbCfBestIpIpSetUrls" xml:space="preserve">
+    <value>IP数据源地址</value>
+  </data>
+  <data name="TbCfBestIpOriginSniList" xml:space="preserve">
+    <value>源站域名列表</value>
+  </data>
+  <data name="TbCfBestIpOriginTestPath" xml:space="preserve">
+    <value>延迟测试路径</value>
+  </data>
+  <data name="TbCfBestIpOriginSpeedTestPath" xml:space="preserve">
+    <value>速度测试路径</value>
+  </data>
+  <data name="TbCfBestIpSelectedProtocol" xml:space="preserve">
+    <value>节点协议</value>
+  </data>
+  <data name="TbCfBestIpProbeMode" xml:space="preserve">
+    <value>探测模式</value>
+  </data>
+  <data name="TbCfBestIpTopN" xml:space="preserve">
+    <value>取前N名</value>
+  </data>
+  <data name="TbCfBestIpLowestSpeed" xml:space="preserve">
+    <value>最低速度(KB/s)</value>
+  </data>
+  <data name="TbCfBestIpTimeout" xml:space="preserve">
+    <value>超时(秒)</value>
+  </data>
+  <data name="TbCfBestIpProbeRepeat" xml:space="preserve">
+    <value>重复探测次数</value>
+  </data>
+  <data name="TbCfBestIpWeightLatency" xml:space="preserve">
+    <value>延迟权重</value>
+  </data>
+  <data name="TbCfBestIpWeightLoss" xml:space="preserve">
+    <value>丢包权重</value>
+  </data>
+  <data name="TbCfBestIpUuid" xml:space="preserve">
+    <value>UUID</value>
+  </data>
+  <data name="TbCfBestIpWsPath" xml:space="preserve">
+    <value>WS路径</value>
+  </data>
+  <data name="TbCfBestIpRun" xml:space="preserve">
+    <value>运行Cloudflare优选</value>
+  </data>
+  <data name="TbCfBestIpRunTip" xml:space="preserve">
+    <value>开始探测Cloudflare CDN优选IP，将结果自动添加到CF优选分组</value>
+  </data>
+  <data name="FillCfBestIpOriginSniList" xml:space="preserve">
+    <value>请填写源站域名列表（至少一个）</value>
+  </data>
+  <data name="FillCfBestIpOriginTestPath" xml:space="preserve">
+    <value>请填写源站延迟测试路径</value>
+  </data>
+  <data name="FillCfBestIpOriginSpeedTestPath" xml:space="preserve">
+    <value>请填写源站速度测试路径</value>
+  </data>
+  <data name="FillCfBestIpDomainsSetUrl" xml:space="preserve">
+    <value>请填写域名列表API地址</value>
+  </data>
 </root>

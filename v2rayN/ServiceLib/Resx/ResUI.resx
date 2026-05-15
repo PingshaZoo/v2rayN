@@ -1731,4 +1731,79 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="menuExport2InnerUri" xml:space="preserve">
     <value>Export v2rayN Internal Share Link to Clipboard</value>
   </data>
+  <data name="menuCloudflareBestIp" xml:space="preserve">
+    <value>Cloudflare Preferred IP</value>
+  </data>
+  <data name="TbCfBestIpSettings" xml:space="preserve">
+    <value>Cloudflare Best IP Settings</value>
+  </data>
+  <data name="TbCfBestIpPostUrls" xml:space="preserve">
+    <value>Post URLs</value>
+  </data>
+  <data name="TbCfBestIpDomainsSetUrl" xml:space="preserve">
+    <value>Domains Set URL</value>
+  </data>
+  <data name="TbCfBestIpHavePostRes" xml:space="preserve">
+    <value>History Results URLs</value>
+  </data>
+  <data name="TbCfBestIpIpSetUrls" xml:space="preserve">
+    <value>IP Source URLs</value>
+  </data>
+  <data name="TbCfBestIpOriginSniList" xml:space="preserve">
+    <value>Origin SNI List</value>
+  </data>
+  <data name="TbCfBestIpOriginTestPath" xml:space="preserve">
+    <value>Test Path</value>
+  </data>
+  <data name="TbCfBestIpOriginSpeedTestPath" xml:space="preserve">
+    <value>Speed Test Path</value>
+  </data>
+  <data name="TbCfBestIpSelectedProtocol" xml:space="preserve">
+    <value>Node Protocol</value>
+  </data>
+  <data name="TbCfBestIpProbeMode" xml:space="preserve">
+    <value>Probe Mode</value>
+  </data>
+  <data name="TbCfBestIpTopN" xml:space="preserve">
+    <value>Top N</value>
+  </data>
+  <data name="TbCfBestIpLowestSpeed" xml:space="preserve">
+    <value>Min Speed (KB/s)</value>
+  </data>
+  <data name="TbCfBestIpTimeout" xml:space="preserve">
+    <value>Timeout (s)</value>
+  </data>
+  <data name="TbCfBestIpProbeRepeat" xml:space="preserve">
+    <value>Probe Repeat</value>
+  </data>
+  <data name="TbCfBestIpWeightLatency" xml:space="preserve">
+    <value>Latency Weight</value>
+  </data>
+  <data name="TbCfBestIpWeightLoss" xml:space="preserve">
+    <value>Loss Weight</value>
+  </data>
+  <data name="TbCfBestIpUuid" xml:space="preserve">
+    <value>UUID</value>
+  </data>
+  <data name="TbCfBestIpWsPath" xml:space="preserve">
+    <value>WS Path</value>
+  </data>
+  <data name="TbCfBestIpRun" xml:space="preserve">
+    <value>Run Cloudflare Probe</value>
+  </data>
+  <data name="TbCfBestIpRunTip" xml:space="preserve">
+    <value>Start probing Cloudflare CDN IPs and add optimized results to CF优选 group</value>
+  </data>
+  <data name="FillCfBestIpOriginSniList" xml:space="preserve">
+    <value>Please fill in the Origin SNI List (at least one domain)</value>
+  </data>
+  <data name="FillCfBestIpOriginTestPath" xml:space="preserve">
+    <value>Please fill in the Origin Test Path</value>
+  </data>
+  <data name="FillCfBestIpOriginSpeedTestPath" xml:space="preserve">
+    <value>Please fill in the Origin Speed Test Path</value>
+  </data>
+  <data name="FillCfBestIpDomainsSetUrl" xml:space="preserve">
+    <value>Please fill in the Domains Set URL</value>
+  </data>
 </root>

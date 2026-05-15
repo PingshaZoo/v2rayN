@@ -42,6 +42,9 @@ public partial class OptionSettingWindow
         cmbCoreType7.ItemsSource = Global.CoreTypes;
         cmbCoreType9.ItemsSource = Global.CoreTypes;
 
+        cmbCfSelectedProtocol.ItemsSource = new List<string> { "vless", "vmess", "trojan" };
+        cmbCfProbeMode.ItemsSource = new List<string> { "full", "edge" };
+
         cmbMixedConcurrencyCount.ItemsSource = Enumerable.Range(2, 7).ToList();
         cmbSpeedTestTimeout.ItemsSource = Enumerable.Range(2, 5).Select(i => i * 5).ToList();
         cmbSpeedTestUrl.ItemsSource = Global.SpeedTestUrls;
@@ -135,6 +138,25 @@ public partial class OptionSettingWindow
             this.Bind(ViewModel, vm => vm.CoreType6, v => v.cmbCoreType6.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.CoreType7, v => v.cmbCoreType7.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.CoreType9, v => v.cmbCoreType9.Text).DisposeWith(disposables);
+
+            // Cloudflare Best IP bindings
+            this.Bind(ViewModel, vm => vm.CfPostUrls, v => v.txtCfPostUrls.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfDomainsSetUrl, v => v.txtCfDomainsSetUrl.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfHavePostRes, v => v.txtCfHavePostRes.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfIpSetUrls, v => v.txtCfIpSetUrls.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfOriginSniList, v => v.txtCfOriginSniList.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfOriginTestPath, v => v.txtCfOriginTestPath.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfOriginSpeedTestPath, v => v.txtCfOriginSpeedTestPath.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfSelectedProtocol, v => v.cmbCfSelectedProtocol.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfProbeMode, v => v.cmbCfProbeMode.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfTopN, v => v.txtCfTopN.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfLowestSpeed, v => v.txtCfLowestSpeed.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfTimeout, v => v.txtCfTimeout.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfProbeRepeat, v => v.txtCfProbeRepeat.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfWeightLatency, v => v.txtCfWeightLatency.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfWeightLoss, v => v.txtCfWeightLoss.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfUuid, v => v.txtCfUuid.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.CfWsPath, v => v.txtCfWsPath.Text).DisposeWith(disposables);
 
             this.BindCommand(ViewModel, vm => vm.SaveCmd, v => v.btnSave).DisposeWith(disposables);
         });

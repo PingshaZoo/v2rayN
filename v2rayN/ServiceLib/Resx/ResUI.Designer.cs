@@ -4895,5 +4895,155 @@ namespace ServiceLib.Resx {
                 return ResourceManager.GetString("UpgradeAppNotExistTip", resourceCulture);
             }
         }
+
+        public static string menuCloudflareBestIp {
+            get {
+                return ResourceManager.GetString("menuCloudflareBestIp", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpSettings {
+            get {
+                return ResourceManager.GetString("TbCfBestIpSettings", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpDomainsSetUrl {
+            get {
+                return ResourceManager.GetString("TbCfBestIpDomainsSetUrl", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpOriginSniList {
+            get {
+                return ResourceManager.GetString("TbCfBestIpOriginSniList", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpOriginTestPath {
+            get {
+                return ResourceManager.GetString("TbCfBestIpOriginTestPath", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpOriginSpeedTestPath {
+            get {
+                return ResourceManager.GetString("TbCfBestIpOriginSpeedTestPath", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpSelectedProtocol {
+            get {
+                return ResourceManager.GetString("TbCfBestIpSelectedProtocol", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpProbeMode {
+            get {
+                return ResourceManager.GetString("TbCfBestIpProbeMode", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpTopN {
+            get {
+                return ResourceManager.GetString("TbCfBestIpTopN", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpLowestSpeed {
+            get {
+                return ResourceManager.GetString("TbCfBestIpLowestSpeed", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpTimeout {
+            get {
+                return ResourceManager.GetString("TbCfBestIpTimeout", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpProbeRepeat {
+            get {
+                return ResourceManager.GetString("TbCfBestIpProbeRepeat", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpWeightLatency {
+            get {
+                return ResourceManager.GetString("TbCfBestIpWeightLatency", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpWeightLoss {
+            get {
+                return ResourceManager.GetString("TbCfBestIpWeightLoss", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpUuid {
+            get {
+                return ResourceManager.GetString("TbCfBestIpUuid", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpWsPath {
+            get {
+                return ResourceManager.GetString("TbCfBestIpWsPath", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpRun {
+            get {
+                return ResourceManager.GetString("TbCfBestIpRun", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpRunTip {
+            get {
+                return ResourceManager.GetString("TbCfBestIpRunTip", resourceCulture);
+            }
+        }
+
+        public static string FillCfBestIpOriginSniList {
+            get {
+                return ResourceManager.GetString("FillCfBestIpOriginSniList", resourceCulture);
+            }
+        }
+
+        public static string FillCfBestIpOriginTestPath {
+            get {
+                return ResourceManager.GetString("FillCfBestIpOriginTestPath", resourceCulture);
+            }
+        }
+
+        public static string FillCfBestIpOriginSpeedTestPath {
+            get {
+                return ResourceManager.GetString("FillCfBestIpOriginSpeedTestPath", resourceCulture);
+            }
+        }
+
+        public static string FillCfBestIpDomainsSetUrl {
+            get {
+                return ResourceManager.GetString("FillCfBestIpDomainsSetUrl", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpPostUrls {
+            get {
+                return ResourceManager.GetString("TbCfBestIpPostUrls", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpHavePostRes {
+            get {
+                return ResourceManager.GetString("TbCfBestIpHavePostRes", resourceCulture);
+            }
+        }
+
+        public static string TbCfBestIpIpSetUrls {
+            get {
+                return ResourceManager.GetString("TbCfBestIpIpSetUrls", resourceCulture);
+            }
+        }
     }
 }

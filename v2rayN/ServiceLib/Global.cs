@@ -703,5 +703,50 @@ public class Global
         "reply",
     ];
 
+    public static readonly List<string> CfBestIpDefaultPostUrls =
+    [
+        "https://pingshaisland.top/api/domains/dell",
+        "https://la.pingshaisland.top/api/domains/dell",
+    ];
+
+    public static readonly List<string> CfBestIpDefaultHavePostRes =
+    [
+        "https://la.pingshaisland.top/api/domains/dell",
+        "https://la.pingshaisland.top/api/domains/shayuan",
+        "https://la.pingshaisland.top/api/domains/cgb",
+        "https://la.pingshaisland.top/api/domains/jujule",
+        "https://la.pingshaisland.top/api/domains/iphone",
+    ];
+
+    public static readonly List<string> CfBestIpDefaultIpSetUrls =
+    [
+        "https://www.wetest.vip/page/cloudflare/address_v4.html",
+        "https://www.wetest.vip/page/cloudflare/total_v4.html",
+        "https://www.wetest.vip/page/cloudflare/colo.html",
+        "https://api.uouin.com/cloudflare.html",
+        "https://v2rayssr.com/cfip/",
+        "https://api.4ce.cn/api/bestCFIP",
+        "https://vps789.com/public/sum/cfIpApi",
+    ];
+
+    public static readonly List<string> CfDefaultIpv4Cidrs =
+    [
+        "103.21.244.0/22",
+        "103.22.200.0/22",
+        "103.31.4.0/22",
+        "104.16.0.0/13",
+        "104.24.0.0/14",
+        "108.162.192.0/18",
+        "131.0.72.0/22",
+        "141.101.64.0/18",
+        "162.158.0.0/15",
+        "172.64.0.0/13",
+        "173.245.48.0/20",
+        "188.114.96.0/20",
+        "190.93.240.0/20",
+        "197.234.240.0/22",
+        "198.41.128.0/17",
+    ];
+
     #endregion const
 }
