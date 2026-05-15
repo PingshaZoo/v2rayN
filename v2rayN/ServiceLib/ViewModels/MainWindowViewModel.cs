@@ -68,6 +68,7 @@ public partial class MainWindowViewModel : MyReactiveObject
     public ReactiveCommand<RxVoid, RxVoid> RegionalPresetIranCmd { get; }
 
     public ReactiveCommand<RxVoid, RxVoid> ReloadCmd { get; }
+    public ReactiveCommand<RxVoid, RxVoid> CloudflareBestIpCmd { get; }
 
     [Reactive]
     public partial bool BlReloadEnabled { get; set; }
@@ -238,6 +239,11 @@ public partial class MainWindowViewModel : MyReactiveObject
         ReloadCmd = ReactiveCommand.CreateFromTask(async () =>
         {
             await Reload();
+        });
+
+        CloudflareBestIpCmd = ReactiveCommand.CreateFromTask(async () =>
+        {
+            await RunCloudflareBestIpAsync();
         });
 
         RegionalPresetDefaultCmd = ReactiveCommand.CreateFromTask(async () =>
@@ -753,6 +759,22 @@ public partial class MainWindowViewModel : MyReactiveObject
                 _hasNextReloadJob = false;
                 await Reload();
             }
+        }
+    }
+
+    private async Task RunCloudflareBestIpAsync()
+    {
+        if (_config == null) return;
+
+        try
+        {
+            SetReloadEnabled(false);
+            await CfBestIpHandler.Instance.RunAsync(_config, (notify, msg) => _ = UpdateHandler(notify, msg));
+        }
+        finally
+        {
+            SetReloadEnabled(true);
+            await RefreshServers();
         }
     }
 

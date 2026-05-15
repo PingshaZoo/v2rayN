@@ -186,6 +186,22 @@ public static class ConfigHandler
         {
             config.Fragment4RayItem.Delays = [config.Fragment4RayItem.Interval ?? "10-20"];
         }
+
+        config.CfBestIpItem ??= new();
+        config.CfBestIpItem.PostUrls ??= Global.CfBestIpDefaultPostUrls;
+        config.CfBestIpItem.HavePostRes ??= Global.CfBestIpDefaultHavePostRes;
+        config.CfBestIpItem.IpSetUrls ??= Global.CfBestIpDefaultIpSetUrls;
+        config.CfBestIpItem.OriginSniList ??= [];
+        config.CfBestIpItem.CfDefaultIpv4Cidrs ??= Global.CfDefaultIpv4Cidrs;
+        config.CfBestIpItem.WsPath ??= "/";
+        if (config.CfBestIpItem.ProbeRepeat < 1)
+        {
+            config.CfBestIpItem.ProbeRepeat = 2;
+        }
+        if (config.CfBestIpItem.Timeout < 1)
+        {
+            config.CfBestIpItem.Timeout = 2;
+        }
         config.GlobalHotkeys ??= [];
 
         if (config.SystemProxyItem.SystemProxyExceptions.IsNullOrEmpty())
