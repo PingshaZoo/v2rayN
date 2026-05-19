@@ -241,96 +241,26 @@ v2rayN/
 - 向后兼容性保障
 - 数据库模式演进
 
-## 新功能：Cloudflare 优选 IP 集成
+## Cloudflare 优选 IP 集成
 
-> **状态：设计阶段（未实现）** | 日期：2026-05-15
+> **状态：已实现** | 日期：2026-05-19
 
-### 需求概述
+### 功能概述
 
-将 [CloudflareBestIP](../CloudflareBestIP/) 项目的功能迁移集成到 v2rayN 中，以 C# 重写探测逻辑，完全融入 .NET 生态。
+Cloudflare 优选 IP 功能从本地探测 Cloudflare CDN 边缘节点的延迟、丢包率和下载速度，自动选出最优 IP 并生成代理节点。
 
-**核心用户故事：**
-1. 用户在设置界面配置 Cloudflare 优选参数（有默认值和必填项），点击保存
-2. 点击菜单"Cloudflare优选"按钮运行探测
-3. 探测完成后，优选出的 IP 节点自动添加到 v2rayN 的"CF优选"分组中
+**解决的问题：**
+- 默认 Cloudflare IP 段可能在中国大陆被限速或不可用
+- 手动测试和筛选 IP 效率极低
+- 需要持续追踪 IP 表现，快速响应网络变化
 
-### 已决策的设计方案
+**用户价值：**
+1. 点击菜单"Cloudflare优选"一键运行，全自动完成：拉取数据源 → 批量探测 → 评分排序 → 导出节点 → 加入分组
+2. 优选出的高质量 IP 节点自动添加到 [CF优选] 分组中，无需手动配置
+3. 探测结果自动 POST 到配置的上报地址，形成历史数据库供后续使用
+4. 支持实时日志反馈探测进度和结果
 
-| 决策项 | 选择 | 说明 |
-|--------|------|------|
-| 菜单名称 | **Cloudflare优选** | 主窗口菜单栏新增 |
-| 配置UI | **集成到设置窗口** | 作为 OptionSettingWindow 的一个 Tab 页 |
-| 实现方式 | **C# 重写探测逻辑** | 方案一：不依赖外部 Python 运行时 |
-| 节点协议 | **下拉选择，首发 VLESS+WS+TLS** | 后续扩展其他协议和配置 |
-| 节点分组 | **自动创建"CF优选"分组** | 运行后自动创建并添加节点 |
-| 阿里云DNS同步 | **暂不需要** | 后续按需添加 |
-| 运行反馈 | **实时日志+进度** | 通过消息/日志区域显示探测进度 |
-| 数据持久化 | **配置存入 guiNConfig.json** | 复用 Config/ConfigHandler 体系 |
-
-### 目标架构（方案一详述）
-
-```
-ServiceLib/
-├── Handler/
-│   └── CloudflareBestIP/                    # 新增模块（全新子目录）
-│       ├── CfBestIpHandler.cs               # 主流程编排
-│       ├── CfDataFetcher.cs                 # 数据源拉取（多URL并发、CIDR过滤去重）
-│       ├── CfIpProber.cs                    # 单IP探测（TCP+TLS+HTTP，对标Python脚本）
-│       ├── CfIpBatchProber.cs               # 多线程批量探测调度（并发控制、增量批次测速）
-│       ├── CfIpScorer.cs                    # 评分排序（延迟+丢包+速度综合评分）
-│       ├── CfResultExporter.cs              # 将TOP结果转为 ProfileItem 节点列表
-│       └── CfBestIpConfig.cs                # 配置模型类
-├── Models/Configs/
-│   └── Config.cs                            # 修改：新增 CfBestIpItem 属性
-│   └── ConfigItems.cs                       # 修改：新增 CfBestIpItem 类定义
-├── ViewModels/
-│   └── OptionSettingViewModel.cs            # 修改：新增CF优选配置属性
-│   └── MainWindowViewModel.cs               # 修改：新增菜单命令
-└── Resx/
-    └── ResUI.resx / ResUI.en.resx           # 修改：新增中英文字符串
-
-v2rayN/v2rayN/
-├── Views/
-│   ├── OptionSettingWindow.xaml             # 修改：新增CF优选Tab页
-│   └── MainWindow.xaml                      # 修改：新增"Cloudflare优选"菜单项
-```
-
-### 模块职责定义
-
-| 模块 | 职责 | 依赖 |
-|------|------|------|
-| `CfBestIpHandler` | 编排完整流程：拉数据→批量探测→评分→导出节点→添加分组 | DataFetcher, BatchProber, Scorer, Exporter, ProfileExManager |
-| `CfDataFetcher` | 从多个 URL 拉取 IP 列表和域名列表，Cloudflare CIDR 过滤去重，按优先级合并 | HttpClient, Config |
-| `CfIpProber` | 单个 IP 的 TCP+TLS+HTTP 探测（full模式：trace+延迟+速度；edge模式：仅trace） | Socket, SslStream |
-| `CfIpBatchProber` | 线程池并发调度，进度回调，增量批次测速（每N个IP触发区域Top5测速） | IpProber, ThreadPool |
-| `CfIpScorer` | 延迟+丢包+速度综合评分，TOP N 排序 | 无外部依赖 |
-| `CfResultExporter` | 将优选结果组装为 `ProfileItem` 节点列表（按用户选择的协议模板） | ProfileItem, Config |
-| `CfBestIpConfig` | 配置模型：探测参数、数据源URL、源站配置、协议模板等 | 无 |
-
-### 配置项设计（对标 config.py）
-
-**必填项：**
-- `OriginSniList` — 源站域名列表（SNI + Host），对应原 `ORIGIN_SNI_LIST`
-- `OriginTestPath` — 延迟测试文件路径，对应原 `ORIGIN_TEST_PATH`
-- `OriginSpeedTestPath` — 速度测试文件路径，对应原 `ORIGIN_SPEED_TEST_PATH`
-- `DomainsSetUrl` — 域名列表 API 地址，对应原 `DOMAINS_SET_URL`
-- `PostUrls` — 探测结果上报地址列表，对应原 `POST_URLS`
-
-**有默认值的可选项：**
-- `HavePostRes` — 历史优质结果 API 列表（Priority-1）
-- `IpSetUrls` — 第三方 IP 数据源 URL 列表（Priority-2）
-- `SleepInterval` — 探测间隔（秒），默认 1
-- `Timeout` — 单次探测超时（秒），默认 2
-- `ProbeRepeat` — 每个 IP 重复探测次数，默认 2
-- `ProbeMode` — 探测模式 "full" 或 "edge"，默认 "full"
-- `TopN` — 最终输出 TOP N，默认 10
-- `LowestSpeed` — 最低速度阈值 KB/s，默认 1000
-- `WeightLatency` / `WeightLoss` / `LossPenaltyMs` — 计分权重
-- `OriginVerifyCert` — 是否验证 TLS 证书，默认 false
-- `CfDefaultIpv4Cidrs` — Cloudflare CIDR 兜底列表
-- `SelectedProtocol` — 生成的节点协议类型，默认 VLESS+WS+TLS
-
-### 数据流
+### 核心流程（两阶段流水线）
 
 ```
 [用户点击"Cloudflare优选"菜单]
@@ -338,43 +268,81 @@ v2rayN/v2rayN/
         ▼
 CfBestIpHandler.RunAsync()
         │
-        ├─(1)─► CfDataFetcher.FetchAllAsync()
-        │         ├─ 并发拉取 HavePostRes (Priority-1)
-        │         ├─ 并发拉取 IpSetUrls (Priority-2)
-        │         ├─ 拉取 DomainsSetUrl → DNS解析 → CF CIDR过滤
-        │         └─ 去重合并 → 返回 IP 列表
+        ├─ Phase 1 ─► CfDataFetcher.FetchHistoricalIpsAsync()   # 拉取历史优结果 (HavePostRes)
+        │               ├─ 并发拉取所有 HavePostRes + PostUrls
+        │               ├─ 反序列化 JSON，按 IP 去重保留最低 score
+        │               └─ 按 score 升序返回 TOP 100
         │
-        ├─(2)─► CfIpBatchProber.ProbeAllAsync(ips, progressCallback)
-        │         ├─ 线程池并发探测（每IP多次）
-        │         ├─ 实时回调进度到消息栏
-        │         └─ 增量批次测速 → 返回探测结果列表
+        ├─ Phase 1 ─► RunProbeAndExportAsync()                    # 批量探测 + 早停
+        │               ├─ CfIpBatchProber: 并发延迟探测 + 串行测速（SpeedPassStop 早停）
+        │               ├─ CfIpScorer: 速度达标按速度降序排名，不达标 9999 垫底
+        │               ├─ CfResultExporter: 生成 ProfileItem 节点
+        │               └─ 自动添加到 [CF优选] 分组
         │
-        ├─(3)─► CfIpScorer.ScoreAndRank(results)
-        │         └─ 返回 TOP N
+        ├─ [Phase 1 达标 >= TopN 时跳过 Phase 2]
         │
-        ├─(4)─► CfResultExporter.ExportAsProfileItems(topResults)
-        │         └─ 使用用户选择的协议模板生成节点
+        ├─ Phase 2 ─► CfDataFetcher.FetchGeneralIpsAsync()       # 拉取常规 IP
+        │               ├─ IpSetUrls 正则提取（并发）
+        │               ├─ DomainsSetUrl DNS 解析（并发）
+        │               └─ Cloudflare CIDR 过滤 + 去重
         │
-        └─(5)─► ProfileExManager.AddProfileItems(nodes, groupName: "CF优选")
-                  └─ 自动创建分组并添加节点
+        ├─ Phase 2 ─► RunProbeAndExportAsync()                    # 补足差额 + 早停
+        │               └─ speedPassThreshold = TopN - Phase1达标数
+        │
+        └─ POST ──► PostResultsAsync()                            # 全量结果上报
+                        ├─ 过滤无效节点（无 IP/无 colo/score>9999）
+                        ├─ JSON 格式匹配 Python 版 (ip/colo/score/lat/loss/source/speed_kb_s/tcp_ms/tls_ms/ttfb_ms/total_ms)
+                        └─ 并发 POST 到所有 PostUrls（最多重试 3 次）
 ```
 
-### 探测逻辑要点（对标 Python 版本）
+### 模块职责
 
-1. **IP优先级**：历史优结果(HavePostRes) → 第三方IP库(IpSetUrls) → 域名解析(DomainsSetUrl)
-2. **两种探测模式**：full（TCP+TLS+HTTP全链路） / edge（仅trace取colo）
-3. **评分公式**：延迟加权 + 丢包惩罚 — TCP/TLS失败率>20%直接淘汰
-4. **增量批次测速**：每100个IP触发一次，三区域各取Top5测速
-5. **Cloudflare CIDR过滤**：从CF官方API下载IPv4 CIDR，过滤非官方IP
-6. **HTTP指纹**：统一Chrome请求头伪装
+| 模块 | 职责 |
+|------|------|
+| `CfBestIpHandler.cs` | 主流程编排：Phase 1 历史 IP → Phase 2 常规 IP → POST 上报 |
+| `CfDataFetcher.cs` | 数据源拉取：HavePostRes JSON 反序列化、IpSetUrls 正则提取、DomainsSetUrl DNS 解析、CF CIDR 过滤去重 |
+| `CfIpProber.cs` | 单 IP 探测引擎：TCP+TLS+HTTP 全链路，分层计时（TCP/TLS/TTFB/Total） |
+| `CfIpBatchProber.cs` | 批量探测调度：并发延迟（Windows 20/Linux 10）+ 串行测速（SpeedPassStop 早停） |
+| `CfIpScorer.cs` | 两轮评分：延迟+丢包淘汰(>20%) → 速度重排名（达标=1,2,3...，不达标=9999） |
+| `CfResultExporter.cs` | TOP 结果转为 ProfileItem 节点列表 |
+| `CfIpSource` | IP+sourceUrl 数据，贯穿整个管线追踪来源 |
 
-### 待决策/待细化
+### 探测计时（对标 Python probe_full_path）
 
-- [ ] OptionSettingWindow 中 CF 优选 Tab 页的具体布局
-- [ ] 协议模板扩展（VMess+WS+TLS, Trojan+TLS 等）
-- [ ] 探测结果的历史记录/日志查看
-- [ ] 是否需要支持 edge 模式（首版只做 full）
-- [ ] 并发线程数的默认值（对标 Python: Windows 20, Linux 10, macOS 10）
+| 计时项 | C# 字段 | Python 字段 | 说明 |
+|--------|---------|-------------|------|
+| TCP 连接 | `TcpMs` | `tcp_ms` | TCP 三次握手耗时 |
+| TLS 握手 | `TlsMs` | `tls_ms` | TLS 协商耗时 |
+| 首字节 | `TtfbMs` | `ttfb_ms` | HTTP 请求→第一个字节到达 |
+| 总耗时 | `TotalMs` | `total_ms` | TCP 连接到下载完成 |
+| 评分延迟 | `AvgLatencyMs` | `lat` | = TcpMs + TtfbMs（去尾均值） |
+| 下载速度 | `DownloadSpeedKBs` | `download_speed` | = 下载字节 / (TotalMs - TcpMs - TlsMs - TtfbMs) |
+
+### POST JSON 格式
+
+```json
+[{
+  "ip": "104.26.12.23",
+  "colo": "SEA",
+  "score": 1,
+  "lat": 589.9,
+  "loss": 0,
+  "source": "https://pingshaisland.top/api/domains/dell20260518",
+  "speed_kb_s": 1113.5,
+  "tcp_ms": 219.8,
+  "tls_ms": 1655.0,
+  "ttfb_ms": 211.9,
+  "total_ms": 2245.6
+}]
+```
+
+### 早停策略
+
+| 阶段 | 策略 |
+|------|------|
+| Phase 1 | 每批 batchSize(10) 个 IP，批次内 SpeedPassStop 早停；全阶段 speedPassThreshold=10 达标即停 |
+| Phase 2 | 仅当 Phase 1 < TopN 时执行；speedPassThreshold = TopN - Phase1 达标数；同样批次早停 |
+| POST | 过滤 score>9999 / colo 为 UNKNOWN/NONE/NULL 的无效节点
 
 ---
 
