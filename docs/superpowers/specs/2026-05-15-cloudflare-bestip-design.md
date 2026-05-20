@@ -106,7 +106,7 @@ CfBestIpHandler.RunAsync(config, onUpdate)
   │     └─ 按 SelectedProtocol 模板生成 ProfileItem：
   │         ├─ VLESS: address=优选IP, port=443, network=ws, security=tls, sni=源站域名
   │         ├─ VMess: 同上 + alterId=0, vmessSecurity=auto
-  │         └─ Trojan: 同上 + 无额外字段
+  │         └─ Trojan: 同上 + 无额外字段 
   │
   └─(5) ConfigHandler.AddServerCommon(config, node) × N
         ├─ 自动生成 IndexId (Guid)
