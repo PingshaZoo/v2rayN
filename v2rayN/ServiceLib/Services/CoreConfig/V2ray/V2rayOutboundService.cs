@@ -8,9 +8,16 @@ public partial class CoreConfigV2rayService
         _coreConfig.outbounds.InsertRange(0, proxyOutboundList);
         if (proxyOutboundList.Count(n => n.tag.StartsWith(Global.ProxyTag)) > 1)
         {
-            var multipleLoad = _node.GetProtocolExtra().MultipleLoad ?? EMultipleLoad.LeastPing;
-            GenObservatory(multipleLoad);
-            GenBalancer(multipleLoad);
+            if (context.AdaptiveConfig != null)
+            {
+                GenAdaptiveConfig(proxyOutboundList);
+            }
+            else
+            {
+                var multipleLoad = _node.GetProtocolExtra().MultipleLoad ?? EMultipleLoad.LeastPing;
+                GenObservatory(multipleLoad);
+                GenBalancer(multipleLoad);
+            }
         }
         if (context.IsTunEnabled)
         {

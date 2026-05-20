@@ -303,3 +303,12 @@ public class CfBestIpItem
     public string Uuid { get; set; } = string.Empty;
     public string WsPath { get; set; } = "/";
 }
+
+[Serializable]
+public class AdaptiveSchedulerItem
+{
+    public bool Enabled { get; set; } = true;
+    public string ProbeUrl { get; set; } = "http://cp.cloudflare.com/";
+    public int ProbeIntervalSec { get; set; } = 30;
+    public int ProbeTimeoutMs { get; set; } = 5000;
+}

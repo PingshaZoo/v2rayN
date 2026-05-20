@@ -20,4 +20,10 @@ public record CoreConfigContext
 
     public bool IsWindows { get; init; }
     public bool IsMacOS { get; init; }
+
+    /// <summary>
+    /// Adaptive scheduler config — set when a PolicyGroup should use adaptive balancing.
+    /// Contains the active set, cooldown set, and per-node probe port mappings.
+    /// </summary>
+    public AdaptiveConfig? AdaptiveConfig { get; init; }
 }

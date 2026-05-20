@@ -557,19 +557,47 @@ public class MainWindowViewModel : MyReactiveObject
                 NoticeManager.Instance.Enqueue(ResUI.CheckServerSettings);
                 return;
             }
+
+            // Stop previous adaptive scheduler before building new config
+            await AdaptiveSchedulerManager.Instance.StopAsync();
+
             var allResult = await CoreConfigContextBuilder.BuildAll(_config, profileItem);
             if (NoticeManager.Instance.NotifyValidatorResult(allResult.CombinedValidatorResult) && !allResult.Success)
             {
                 return;
             }
 
+            // Phase 1: if adaptive scheduling applies, initialize nodes BEFORE LoadCore
+            // so the first generated config already includes probe inbounds.
+            var mainContext = allResult.MainResult.Context;
+            var adaptiveActive = TryInitializeAdaptiveNodes(profileItem, mainContext, out var adaptiveChildNodes);
+
+            if (adaptiveActive)
+            {
+                // Phase 1b: bootstrap probing (direct TCP to remote hosts, no xray needed).
+                // Scores are updated from real latency data before the first LoadCore,
+                // so the initial weighted balancer uses real weights — no double-reload.
+                await AdaptiveSchedulerManager.Instance.BootstrapAsync();
+
+                mainContext = mainContext with
+                {
+                    AdaptiveConfig = AdaptiveSchedulerManager.Instance.GetCurrentConfig()
+                };
+            }
+
             await Task.Run(async () =>
             {
-                await LoadCore(allResult.MainResult.Context, allResult.PreSocksResult?.Context);
+                await LoadCore(mainContext, allResult.PreSocksResult?.Context);
                 await SysProxyHandler.UpdateSysProxy(_config, false);
                 await Task.Delay(1000);
             });
             AppEvents.TestServerRequested.Publish();
+
+            // Phase 2: start ProbeService + active-set monitor (requires xray running)
+            if (adaptiveActive)
+            {
+                await AdaptiveSchedulerManager.Instance.StartProbesAsync();
+            }
 
             var showClashUI = AppManager.Instance.IsRunningCore(ECoreType.sing_box);
             if (showClashUI)
@@ -590,6 +618,54 @@ public class MainWindowViewModel : MyReactiveObject
                 await Reload();
             }
         }
+    }
+
+    /// <summary>
+    /// If the profile is a PolicyGroup with adaptive scheduling enabled and >1 valid child,
+    /// calls <see cref="AdaptiveSchedulerManager.InitializeNodes"/> to build node states
+    /// and allocate probe ports. The returned AdaptiveConfig should be attached to the
+    /// CoreConfigContext BEFORE LoadCore so probe inbounds exist from the start.
+    /// </summary>
+    /// <returns>true if adaptive scheduling is active and nodes were initialized.</returns>
+    private bool TryInitializeAdaptiveNodes(
+        ProfileItem profileItem,
+        CoreConfigContext context,
+        out Dictionary<string, ProfileItem> childNodes)
+    {
+        childNodes = [];
+
+        if (profileItem.ConfigType != EConfigType.PolicyGroup) return false;
+        if (_config.AdaptiveSchedulerItem is not { Enabled: true }) return false;
+
+        var childIds = Utils.String2List(profileItem.GetProtocolExtra().ChildItems);
+        if (childIds == null || childIds.Count <= 1) return false;
+
+        foreach (var childId in childIds)
+        {
+            if (context.AllProxiesMap.TryGetValue(childId, out var child) && child.IsValid())
+                childNodes[childId] = child;
+        }
+        if (childNodes.Count <= 1) return false;
+
+        var policyApplier = new ReloadPolicyApplier(
+            async (adaptiveConfig) =>
+            {
+                var newAllResult = await CoreConfigContextBuilder.BuildAll(_config, profileItem);
+                if (newAllResult.Success)
+                {
+                    var newContext = newAllResult.MainResult.Context with { AdaptiveConfig = adaptiveConfig };
+                    await CoreManager.Instance.LoadCore(newContext, newAllResult.PreSocksResult?.Context);
+                }
+            });
+
+        AdaptiveSchedulerManager.Instance.InitializeNodes(
+            _config,
+            profileItem,
+            childNodes,
+            UpdateHandler,
+            policyApplier);
+
+        return true;
     }
 
     private async Task RunCloudflareBestIpAsync()

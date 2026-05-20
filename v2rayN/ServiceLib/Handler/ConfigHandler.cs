@@ -183,6 +183,7 @@ public static class ConfigHandler
         {
             config.CfBestIpItem.Timeout = 2;
         }
+        config.AdaptiveSchedulerItem ??= new();
         config.GlobalHotkeys ??= new();
 
         if (config.SystemProxyItem.SystemProxyExceptions.IsNullOrEmpty())

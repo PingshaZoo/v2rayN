@@ -1,3 +1,5 @@
+using ServiceLib.Models.CoreConfigs;
+
 namespace ServiceLib.Events;
 
 public static class AppEvents
@@ -27,4 +29,6 @@ public static class AppEvents
     public static readonly EventChannel<Unit> TestServerRequested = new();
     public static readonly EventChannel<Unit> InboundDisplayRequested = new();
     public static readonly EventChannel<ESysProxyType> SysProxyChangeRequested = new();
+
+    public static readonly EventChannel<AdaptiveConfig> ActiveSetChanged = new();
 }

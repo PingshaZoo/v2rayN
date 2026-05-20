@@ -35,6 +35,7 @@ public class Config
     public List<CoreTypeItem> CoreTypeItem { get; set; }
     public SimpleDNSItem SimpleDNSItem { get; set; }
     public CfBestIpItem CfBestIpItem { get; set; }
+    public AdaptiveSchedulerItem AdaptiveSchedulerItem { get; set; }
 
     #endregion other entities
 }

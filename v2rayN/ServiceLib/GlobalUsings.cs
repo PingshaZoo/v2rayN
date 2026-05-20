@@ -29,6 +29,7 @@ global using ServiceLib.Handler.Builder;
 global using ServiceLib.Handler.Fmt;
 global using ServiceLib.Handler.SysProxy;
 global using ServiceLib.Handler.CloudflareBestIP;
+global using ServiceLib.Handler.AdaptiveNodeScheduler;
 global using ServiceLib.Helper;
 global using ServiceLib.Manager;
 global using ServiceLib.Models.CoreConfigs;
