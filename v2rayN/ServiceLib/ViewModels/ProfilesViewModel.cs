@@ -256,6 +256,16 @@ public class ProfilesViewModel : MyReactiveObject
             .ObserveOn(RxSchedulers.MainThreadScheduler)
             .Subscribe(async indexId => await SetDefaultServer(indexId));
 
+        AppEvents.ActiveSetChanged
+            .AsObservable()
+            .ObserveOn(RxSchedulers.MainThreadScheduler)
+            .Subscribe(async _ => await UpdateAdaptiveQoS());
+
+        // Periodic QoS refresh for score drift between active-set changes
+        Observable.Interval(TimeSpan.FromSeconds(5))
+            .ObserveOn(RxSchedulers.MainThreadScheduler)
+            .Subscribe(async _ => await UpdateAdaptiveQoS());
+
         #endregion AppEvents
 
         _ = Init();
@@ -328,6 +338,49 @@ public class ProfilesViewModel : MyReactiveObject
         }
         catch
         {
+        }
+        await Task.CompletedTask;
+    }
+
+    private async Task UpdateAdaptiveQoS()
+    {
+        if (!AdaptiveSchedulerManager.Instance.IsRunning)
+            return;
+
+        var tagToIndexId = AdaptiveSchedulerManager.Instance.TagToIndexId;
+        if (tagToIndexId is not { Count: > 0 })
+            return;
+
+        var activeTags = AdaptiveSchedulerManager.Instance.GetCurrentConfig()?.ActiveTags;
+        var activeSet = activeTags is { Count: > 0 }
+            ? new HashSet<string>(activeTags, StringComparer.Ordinal)
+            : null;
+
+        foreach (var node in AdaptiveSchedulerManager.Instance.Nodes)
+        {
+            if (!tagToIndexId.TryGetValue(node.Tag, out var childIndexId))
+                continue;
+
+            var item = ProfileItems.FirstOrDefault(it => it.IndexId == childIndexId);
+            if (item == null)
+                continue;
+
+            var isActive = activeSet?.Contains(node.Tag) ?? false;
+            item.AdaptiveScore = (int)Math.Round(node.Score);
+            item.AdaptiveScoreVal = $"{node.Score:F0}";
+            item.AdaptiveLatency = (int)Math.Round(node.EwmaLatencyMs);
+            item.AdaptiveLatencyVal = $"{node.EwmaLatencyMs:F0} ms";
+            item.AdaptiveCooldown = node.IsInCooldown;
+            item.AdaptiveCooldownVal = node.IsInCooldown ? "Yes" : string.Empty;
+            item.AdaptiveActive = isActive;
+            item.AdaptiveActiveVal = isActive ? "Active" : string.Empty;
+
+            ProfileExManager.Instance.SetAdaptiveData(
+                childIndexId,
+                (int)Math.Round(node.Score),
+                (int)Math.Round(node.EwmaLatencyMs),
+                node.IsInCooldown,
+                isActive);
         }
         await Task.CompletedTask;
     }
@@ -440,7 +493,15 @@ public class ProfilesViewModel : MyReactiveObject
                         TodayDown = t22 == null ? "" : Utils.HumanFy(t22.TodayDown),
                         TodayUp = t22 == null ? "" : Utils.HumanFy(t22.TodayUp),
                         TotalDown = t22 == null ? "" : Utils.HumanFy(t22.TotalDown),
-                        TotalUp = t22 == null ? "" : Utils.HumanFy(t22.TotalUp)
+                        TotalUp = t22 == null ? "" : Utils.HumanFy(t22.TotalUp),
+                        AdaptiveScore = t33?.AdaptiveScore ?? 0,
+                        AdaptiveScoreVal = t33?.AdaptiveScore > 0 ? $"{t33.AdaptiveScore}" : string.Empty,
+                        AdaptiveLatency = t33?.AdaptiveLatency ?? 0,
+                        AdaptiveLatencyVal = t33?.AdaptiveLatency > 0 ? $"{t33.AdaptiveLatency} ms" : string.Empty,
+                        AdaptiveCooldown = (t33?.AdaptiveCooldown ?? 0) != 0,
+                        AdaptiveCooldownVal = (t33?.AdaptiveCooldown ?? 0) != 0 ? "Yes" : string.Empty,
+                        AdaptiveActive = (t33?.AdaptiveActive ?? 0) != 0,
+                        AdaptiveActiveVal = (t33?.AdaptiveActive ?? 0) != 0 ? "Active" : string.Empty,
                     }).OrderBy(t => t.Sort).ToList();
 
         return lstModel;

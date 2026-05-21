@@ -38,6 +38,26 @@ public class ProfileItemModel : ReactiveObject
     [Reactive]
     public string TotalDown { get; set; }
 
+    // ── Adaptive QoS display ───────────────────────────────────
+
+    [Reactive]
+    public string AdaptiveScoreVal { get; set; }
+
+    [Reactive]
+    public string AdaptiveLatencyVal { get; set; }
+
+    [Reactive]
+    public string AdaptiveCooldownVal { get; set; }
+
+    [Reactive]
+    public string AdaptiveActiveVal { get; set; }
+
+    // Sort backing values — non-string versions for sorting
+    public int AdaptiveScore { get; set; }
+    public int AdaptiveLatency { get; set; }
+    public bool AdaptiveCooldown { get; set; }
+    public bool AdaptiveActive { get; set; }
+
     public string GetSummary()
     {
         var summary = $"[{ConfigType}] {Remarks}";

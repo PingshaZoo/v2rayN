@@ -37,6 +37,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     private IAdaptivePolicyApplier? _policyApplier;
     private List<NodeState> _nodes = [];
     private Dictionary<string, int> _probePorts = new(StringComparer.Ordinal);
+    private Dictionary<string, string> _tagToIndexId = new(StringComparer.Ordinal);
     private CancellationTokenSource? _monitorCts;
     private bool _isRunning;
     private bool _nodesInitialized;
@@ -54,6 +55,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     public bool IsRunning => _isRunning;
     public IReadOnlyList<NodeState> Nodes => _nodes.AsReadOnly();
     public IReadOnlyDictionary<string, int> ProbePorts => _probePorts.AsReadOnly();
+    public IReadOnlyDictionary<string, string> TagToIndexId => _tagToIndexId.AsReadOnly();
 
     /// <summary>
     /// Returns the current AdaptiveConfig (used to generate xray config).
@@ -66,7 +68,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
             ActiveTags = _activeSetManager.GetActiveTags(),
             CooldownTags = _activeSetManager.GetCooldownTags(),
             ProbePorts = _probePorts,
-            NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score)
+            NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score),
+            TagToIndexId = _tagToIndexId,
         };
     }
 
@@ -92,6 +95,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
         _collector = new FailureCollector(_scorer, _cooldown);
         _activeSetManager = new ActiveSetManager(_nodes);
+        _tagToIndexId = _nodes.ToDictionary(n => n.Tag, n => n.ChildIndexId);
         _nodesInitialized = true;
 
         return new AdaptiveConfig
@@ -99,7 +103,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
             ActiveTags = _nodes.Select(n => n.Tag).ToList(),
             CooldownTags = [],
             ProbePorts = _probePorts,
-            NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score)
+            NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score),
+            TagToIndexId = _tagToIndexId,
         };
     }
 
@@ -179,6 +184,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
         _nodes.Clear();
         _probePorts.Clear();
+        _tagToIndexId.Clear();
         if (_policyApplier is not null)
         {
             try { await _policyApplier.DisposeAsync(); }
@@ -243,7 +249,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
             ActiveTags = active,
             CooldownTags = cooldown,
             ProbePorts = _probePorts,
-            NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score)
+            NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score),
+            TagToIndexId = _tagToIndexId,
         };
 
         AppEvents.ActiveSetChanged.Publish(config);
@@ -258,7 +265,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     {
         var list = new List<NodeState>();
         int idx = 0;
-        foreach (var (_, child) in childNodes)
+        foreach (var (childId, child) in childNodes)
         {
             if (!child.IsValid()) continue;
 
@@ -269,6 +276,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                 Host = child.Address ?? "",
                 Port = child.Port,
                 Protocol = ProxyProtocol.Tcp,
+                ChildIndexId = childId,
             });
             idx++;
         }

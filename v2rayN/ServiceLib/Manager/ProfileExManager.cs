@@ -150,6 +150,16 @@ public class ProfileExManager
         IndexIdEnqueue(indexId);
     }
 
+    public void SetAdaptiveData(string indexId, int score, int latency, bool cooldown, bool active)
+    {
+        var profileEx = GetProfileExItem(indexId);
+        profileEx.AdaptiveScore = score;
+        profileEx.AdaptiveLatency = latency;
+        profileEx.AdaptiveCooldown = cooldown ? 1 : 0;
+        profileEx.AdaptiveActive = active ? 1 : 0;
+        IndexIdEnqueue(indexId);
+    }
+
     public void SetSort(string indexId, int sort)
     {
         var profileEx = GetProfileExItem(indexId);

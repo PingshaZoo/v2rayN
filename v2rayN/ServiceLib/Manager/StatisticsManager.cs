@@ -124,6 +124,65 @@ public class StatisticsManager
         server.TotalUp = _serverStatItem.TotalUp;
         server.TotalDown = _serverStatItem.TotalDown;
         await _updateFunc?.Invoke(server);
+
+        // Route per-tag traffic to child node statistics rows when adaptive scheduling is active.
+        if (server.PerTagProxyTraffic is { Count: > 0 }
+            && AdaptiveSchedulerManager.Instance.IsRunning)
+        {
+            var tagToIndexId = AdaptiveSchedulerManager.Instance.TagToIndexId;
+            if (tagToIndexId is { Count: > 0 })
+            {
+                foreach (var (tag, (up, down)) in server.PerTagProxyTraffic)
+                {
+                    if (!tagToIndexId.TryGetValue(tag, out var childIndexId))
+                        continue;
+
+                    var childStat = await GetOrCreateStatItem(childIndexId);
+                    childStat.TodayUp += up;
+                    childStat.TodayDown += down;
+                    childStat.TotalUp += up;
+                    childStat.TotalDown += down;
+
+                    await _updateFunc?.Invoke(new ServerSpeedItem
+                    {
+                        IndexId = childIndexId,
+                        ProxyUp = up,
+                        ProxyDown = down,
+                        TodayUp = childStat.TodayUp,
+                        TodayDown = childStat.TodayDown,
+                        TotalUp = childStat.TotalUp,
+                        TotalDown = childStat.TotalDown,
+                    });
+                }
+            }
+        }
+    }
+
+    private async Task<ServerStatItem> GetOrCreateStatItem(string indexId)
+    {
+        var ticks = DateTime.Now.Date.Ticks;
+        var stat = _lstServerStat.FirstOrDefault(t => t.IndexId == indexId);
+        if (stat == null)
+        {
+            stat = new ServerStatItem
+            {
+                IndexId = indexId,
+                TotalUp = 0,
+                TotalDown = 0,
+                TodayUp = 0,
+                TodayDown = 0,
+                DateNow = ticks
+            };
+            await SQLiteHelper.Instance.ReplaceAsync(stat);
+            _lstServerStat.Add(stat);
+        }
+        if (stat.DateNow != ticks)
+        {
+            stat.TodayUp = 0;
+            stat.TodayDown = 0;
+            stat.DateNow = ticks;
+        }
+        return stat;
     }
 
     private async Task GetServerStatItem(string indexId)

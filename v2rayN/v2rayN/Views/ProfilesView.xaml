@@ -340,6 +340,43 @@
                     </base:MyDGTextColumn>
 
                     <base:MyDGTextColumn
+                        Width="60"
+                        Binding="{Binding AdaptiveScoreVal}"
+                        ExName="AdaptiveScoreVal"
+                        Header="Score"
+                        SortMemberPath="AdaptiveScore">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="{x:Type TextBlock}">
+                                <Setter Property="HorizontalAlignment" Value="Right" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </base:MyDGTextColumn>
+                    <base:MyDGTextColumn
+                        Width="80"
+                        Binding="{Binding AdaptiveLatencyVal}"
+                        ExName="AdaptiveLatencyVal"
+                        Header="EWMA TTFB"
+                        SortMemberPath="AdaptiveLatency">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="{x:Type TextBlock}">
+                                <Setter Property="HorizontalAlignment" Value="Right" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </base:MyDGTextColumn>
+                    <base:MyDGTextColumn
+                        Width="50"
+                        Binding="{Binding AdaptiveCooldownVal}"
+                        ExName="AdaptiveCooldownVal"
+                        Header="Cooldown"
+                        SortMemberPath="AdaptiveCooldown" />
+                    <base:MyDGTextColumn
+                        Width="70"
+                        Binding="{Binding AdaptiveActiveVal}"
+                        ExName="AdaptiveActiveVal"
+                        Header="Active"
+                        SortMemberPath="AdaptiveActive" />
+
+                    <base:MyDGTextColumn
                         x:Name="colTodayUp"
                         Width="100"
                         Binding="{Binding TodayUp}"

@@ -4,6 +4,7 @@ public class StatisticsXrayService
 {
     private const long linkBase = 1024;
     private ServerSpeedItem _serverSpeedItem = new();
+    private readonly Dictionary<string, (long Uplink, long Downlink)> _perTagBaseline = new(StringComparer.Ordinal);
     private readonly Config _config;
     private bool _exitFlag;
     private readonly Func<ServerSpeedItem, Task>? _updateFunc;
@@ -60,6 +61,7 @@ public class StatisticsXrayService
             }
 
             ServerSpeedItem server = new();
+            var perTagCumulative = new Dictionary<string, (long Uplink, long Downlink)>(StringComparer.Ordinal);
             foreach (var key in source.stats.outbound.Keys.Cast<string>())
             {
                 var value = source.stats.outbound[key];
@@ -73,6 +75,7 @@ public class StatisticsXrayService
                 {
                     server.ProxyUp += state.uplink / linkBase;
                     server.ProxyDown += state.downlink / linkBase;
+                    perTagCumulative[key] = (state.uplink / linkBase, state.downlink / linkBase);
                 }
                 else if (key == Global.DirectTag)
                 {
@@ -84,6 +87,7 @@ public class StatisticsXrayService
             if (server.DirectDown < _serverSpeedItem.DirectDown || server.ProxyDown < _serverSpeedItem.ProxyDown)
             {
                 _serverSpeedItem = new();
+                _perTagBaseline.Clear();
                 return null;
             }
 
@@ -94,6 +98,30 @@ public class StatisticsXrayService
                 DirectUp = server.DirectUp - _serverSpeedItem.DirectUp,
                 DirectDown = server.DirectDown - _serverSpeedItem.DirectDown,
             };
+
+            // Compute per-tag proxy traffic deltas
+            if (perTagCumulative.Count > 0)
+            {
+                var perTagDeltas = new Dictionary<string, (long Up, long Down)>(StringComparer.Ordinal);
+                foreach (var (tag, (uplink, downlink)) in perTagCumulative)
+                {
+                    if (_perTagBaseline.TryGetValue(tag, out var prev))
+                    {
+                        var deltaUp = uplink - prev.Uplink;
+                        var deltaDown = downlink - prev.Downlink;
+                        if (deltaUp > 0 || deltaDown > 0)
+                            perTagDeltas[tag] = (deltaUp, deltaDown);
+                    }
+                    else
+                    {
+                        // First observation — don't report a spike; baseline it
+                    }
+                    _perTagBaseline[tag] = (uplink, downlink);
+                }
+                if (perTagDeltas.Count > 0)
+                    curItem.PerTagProxyTraffic = perTagDeltas;
+            }
+
             _serverSpeedItem = server;
             return curItem;
         }

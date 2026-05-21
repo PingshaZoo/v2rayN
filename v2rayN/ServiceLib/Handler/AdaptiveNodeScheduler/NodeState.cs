@@ -9,6 +9,7 @@ public sealed class NodeState
     public string Host { get; init; }
     public int Port { get; init; }
     public ProxyProtocol Protocol { get; init; }
+    public string ChildIndexId { get; init; }
 
     // ── scoring state (protected by _lock) ─────────────────────
     private readonly object _lock = new();

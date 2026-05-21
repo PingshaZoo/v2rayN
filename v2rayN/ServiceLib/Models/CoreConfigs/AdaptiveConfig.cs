@@ -19,4 +19,8 @@ public record AdaptiveConfig
     /// to build a weighted selector via tag duplication (high-score nodes appear
     /// more times in the balancer's random selector).</summary>
     public IReadOnlyDictionary<string, double> NodeScores { get; init; } = new Dictionary<string, double>();
+
+    /// <summary>Maps node outbound tag → child ProfileItem IndexId.
+    /// Used by StatisticsManager to attribute per-outbound traffic to child rows.</summary>
+    public IReadOnlyDictionary<string, string> TagToIndexId { get; init; } = new Dictionary<string, string>();
 }
