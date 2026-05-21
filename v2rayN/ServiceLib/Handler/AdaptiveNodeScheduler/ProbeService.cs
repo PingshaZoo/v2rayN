@@ -64,6 +64,10 @@ public sealed class ProbeService : IDisposable
         {
             try
             {
+                // Phase 1: Cooldown recovery — probe nodes near expiry
+                await ProbeCooldownRecoveryAsync(ct).ConfigureAwait(false);
+
+                // Phase 2: Normal probe cycle
                 foreach (var node in _nodes)
                 {
                     if (ct.IsCancellationRequested) break;
@@ -108,6 +112,52 @@ public sealed class ProbeService : IDisposable
         catch
         {
             _collector.RecordFailure(node, FailureType.NetworkError, _nodes);
+        }
+    }
+
+    /// <summary>
+    /// Probes nodes whose cooldown expires within the next interval window.
+    /// On success the cooldown is cleared immediately, reducing recovery latency.
+    /// On failure the CooldownFsm extends the cooldown period.
+    /// </summary>
+    private async Task ProbeCooldownRecoveryAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        // Look ahead ~120% of the probe interval to catch nodes expiring soon
+        double windowMs = _intervalMs * 1.2;
+
+        foreach (var node in _nodes)
+        {
+            if (ct.IsCancellationRequested) break;
+            if (!node.IsInCooldown) continue;
+
+            var remainingMs = (node.CooldownUntil - now).TotalMilliseconds;
+            if (remainingMs > windowMs || remainingMs < 0) continue;
+
+            int port = _portResolver(node.Tag);
+            var (_, client) = _pool.GetOrAdd(node.Tag, _ => CreateEntry(port));
+
+            using var linkCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            // Use a shorter timeout for recovery probes
+            linkCts.CancelAfter(Math.Min(_probeTimeoutMs, 3000));
+
+            long t0 = Stopwatch.GetTimestamp();
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Head, _probeUrl);
+                using var resp = await client
+                    .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, linkCts.Token)
+                    .ConfigureAwait(false);
+
+                double ttfbMs = ElapsedMs(t0);
+                _collector.RecordSuccess(node, ttfbMs);
+                node.ResetCooldown(); // early recovery: clear cooldown
+            }
+            catch
+            {
+                // RecordFailure extends cooldown via CooldownFsm
+                _collector.RecordFailure(node, FailureType.Timeout, _nodes);
+            }
         }
     }
 

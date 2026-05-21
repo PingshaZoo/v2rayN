@@ -52,6 +52,11 @@ public partial class AddGroupServerWindow : WindowBase<AddGroupServerViewModel>
             this.Bind(ViewModel, vm => vm.SelectedSource.Remarks, v => v.txtRemarks.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.CoreType, v => v.cmbCoreType.SelectedValue).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.PolicyGroupType, v => v.cmbPolicyGroupType.SelectedValue).DisposeWith(disposables);
+            this.OneWayBind(ViewModel, vm => vm.IsPolicyGroupTypeEnabled, v => v.cmbPolicyGroupType.IsEnabled).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveEnabled, v => v.chkAdaptiveEnabled.IsChecked).DisposeWith(disposables);
+            ViewModel!.WhenAnyValue(x => x.AdaptiveEnabled)
+                .Subscribe(a => txtAdaptiveHint.IsVisible = a)
+                .DisposeWith(disposables);
             //this.OneWayBind(ViewModel, vm => vm.SubItems, v => v.cmbSubChildItems.ItemsSource).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.SelectedSubItem, v => v.cmbSubChildItems.SelectedItem).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.Filter, v => v.cmbFilter.Text).DisposeWith(disposables);

@@ -86,6 +86,25 @@
                     Width="200"
                     Margin="{StaticResource Margin4}" />
             </Grid>
+            <StackPanel
+                x:Name="gridAdaptive"
+                Grid.Row="4"
+                Grid.Column="0"
+                Grid.ColumnSpan="3"
+                Margin="{StaticResource Margin4}"
+                Orientation="Horizontal">
+                <CheckBox
+                    x:Name="chkAdaptiveEnabled"
+                    VerticalAlignment="Center"
+                    Content="Adaptive Scheduling" />
+                <TextBlock
+                    x:Name="txtAdaptiveHint"
+                    Margin="{StaticResource MarginLeftRight8}"
+                    VerticalAlignment="Center"
+                    Text="C# adaptive control plane active — PolicyGroupType is overridden. Disable above to restore."
+                    TextWrapping="Wrap"
+                    IsVisible="False" />
+            </StackPanel>
         </Grid>
 
         <TabControl

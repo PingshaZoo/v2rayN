@@ -18,6 +18,12 @@ public class AddGroupServerViewModel : MyReactiveObject
     public string? PolicyGroupType { get; set; }
 
     [Reactive]
+    public bool AdaptiveEnabled { get; set; }
+
+    [Reactive]
+    public bool IsPolicyGroupTypeEnabled { get; set; } = true;
+
+    [Reactive]
     public SubItem? SelectedSubItem { get; set; }
 
     [Reactive]
@@ -76,6 +82,10 @@ public class AddGroupServerViewModel : MyReactiveObject
         SelectedSource = profileItem.IndexId.IsNullOrEmpty() ? profileItem : JsonUtils.DeepCopy(profileItem);
         CoreType = (SelectedSource?.CoreType ?? ECoreType.Xray).ToString();
 
+        // When adaptive is enabled, PolicyGroupType is read-only
+        this.WhenAnyValue(x => x.AdaptiveEnabled)
+            .Subscribe(adaptive => IsPolicyGroupTypeEnabled = !adaptive);
+
         _ = Init();
     }
 
@@ -91,6 +101,8 @@ public class AddGroupServerViewModel : MyReactiveObject
             EMultipleLoad.LeastLoad => ResUI.TbLeastLoad,
             _ => ResUI.TbLeastPing,
         };
+
+        AdaptiveEnabled = protocolExtra?.AdaptiveEnabled ?? false;
 
         var subs = await AppManager.Instance.SubItems();
         subs.Add(new SubItem());
@@ -194,6 +206,7 @@ public class AddGroupServerViewModel : MyReactiveObject
             },
             SubChildItems = SelectedSubItem?.Id,
             Filter = Filter,
+            AdaptiveEnabled = AdaptiveEnabled,
         };
     }
 

@@ -131,6 +131,30 @@
                         materialDesign:HintAssist.Hint="{x:Static resx:ResUI.TbPolicyGroupType}"
                         Style="{StaticResource DefComboBox}" />
                 </Grid>
+                <Grid
+                    x:Name="gridAdaptive"
+                    Grid.Row="4"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="3"
+                    Margin="{StaticResource Margin4}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <CheckBox
+                        x:Name="chkAdaptiveEnabled"
+                        Grid.Column="0"
+                        VerticalAlignment="Center"
+                        Content="Adaptive Scheduling" />
+                    <TextBlock
+                        x:Name="txtAdaptiveHint"
+                        Grid.Column="1"
+                        Margin="{StaticResource MarginLeftRight8}"
+                        VerticalAlignment="Center"
+                        Text="C# adaptive control plane active — PolicyGroupType is overridden. Disable above to restore."
+                        TextWrapping="Wrap"
+                        Visibility="Collapsed" />
+                </Grid>
             </Grid>
         </Grid>
 

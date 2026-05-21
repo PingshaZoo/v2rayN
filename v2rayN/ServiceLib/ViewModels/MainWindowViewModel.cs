@@ -636,6 +636,7 @@ public class MainWindowViewModel : MyReactiveObject
 
         if (profileItem.ConfigType != EConfigType.PolicyGroup) return false;
         if (_config.AdaptiveSchedulerItem is not { Enabled: true }) return false;
+        if (!(profileItem.GetProtocolExtra().AdaptiveEnabled ?? false)) return false;
 
         var childIds = Utils.String2List(profileItem.GetProtocolExtra().ChildItems);
         if (childIds == null || childIds.Count <= 1) return false;

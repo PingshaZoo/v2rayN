@@ -33,6 +33,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
     private FailureCollector? _collector;
     private ProbeService? _probeService;
+    private ScoreLogger? _scoreLogger;
     private ActiveSetManager? _activeSetManager;
     private IAdaptivePolicyApplier? _policyApplier;
     private List<NodeState> _nodes = [];
@@ -121,6 +122,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         if (!_nodesInitialized || _nodes.Count == 0)
             return;
 
+        await RestorePersistedScoresAsync();
+
         await _updateFunc!(false, $"[{_tag}] Bootstrap probing {_nodes.Count} nodes...");
         await _bootstrapper.InitializeAsync(_nodes, _scorer);
         await _updateFunc!(false, $"[{_tag}] Bootstrap complete.");
@@ -140,6 +143,9 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
         _probeService = new ProbeService(_nodes, tag => _probePorts[tag], _collector!, _adaptiveItem!);
         _probeService.Start();
+
+        _scoreLogger = new ScoreLogger(_nodes, msg => _ = _updateFunc!(false, $"[{_tag}] {msg}"));
+        _scoreLogger.Start();
 
         // Prime the change tracker with the current (post-bootstrap) top-K set
         // so the first monitor check doesn't fire a spurious reload.
@@ -182,6 +188,9 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         _probeService?.Dispose();
         _probeService = null;
 
+        _scoreLogger?.Stop();
+        _scoreLogger = null;
+
         _nodes.Clear();
         _probePorts.Clear();
         _tagToIndexId.Clear();
@@ -203,6 +212,28 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     }
 
     // ── Private ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Restores persisted scores from ProfileExItem before bootstrap probing.
+    /// Nodes with a saved AdaptiveScore > 0 start from their known state rather
+    /// than default scores, preserving EWMA state across restarts.
+    /// </summary>
+    private async Task RestorePersistedScoresAsync()
+    {
+        var profileExs = await ProfileExManager.Instance.GetProfileExs();
+        int restored = 0;
+        foreach (var node in _nodes)
+        {
+            var ex = profileExs.FirstOrDefault(p => p.IndexId == node.ChildIndexId);
+            if (ex == null || ex.AdaptiveScore <= 0) continue;
+
+            double lat = ex.AdaptiveLatency > 0 ? ex.AdaptiveLatency : 500.0;
+            node.UpdateScore(lat, 0.0, ex.AdaptiveScore, 0);
+            restored++;
+        }
+        if (restored > 0)
+            await _updateFunc!(false, $"[{_tag}] Restored persisted scores for {restored}/{_nodes.Count} nodes.");
+    }
 
     private async Task MonitorActiveSetAsync(CancellationToken ct)
     {

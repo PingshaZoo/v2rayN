@@ -1002,3 +1002,61 @@ public class ScoreLogger {
 | 吞吐率 | 辅助指标，不入主公式 | 主要用于异常检测，避免 xray stats 分辨率不足带来的噪声 |
 | 兜底策略 | 选 cooldown 最短节点 | 总好过返回错误；用户可手动刷新重试 |
 | 系统复杂度 | 轻量 adaptive routing | v2rayN 定位决定必须"轻"；核心数学不能省，UI 复杂度可以省 |
+
+---
+
+## 11. 实时节点速度显示（Real-time Node Speed Display）
+
+**方案设计：Claude** | 日期：2026-05-21
+
+### 11.1 问题
+
+主界面表格的 Speed 列只在手动测速时才更新。Adaptive 负载均衡运行时，右下角状态栏有总速度，但无法知道每个节点当前的实际吞吐量。
+
+### 11.2 实现方案
+
+不改表结构、不新增列、不新增事件。利用已有的统计管线数据直接写到现有 Speed 列的显示属性。
+
+### 11.3 数据流
+
+```
+xray /debug/vars (1s 轮询)
+  → StatisticsXrayService.ParseOutput()
+    → PerTagProxyTraffic: { tag → (up KB, down KB) }     ← 已有
+  → StatisticsManager.UpdateServerStat()
+    → 对每个 tag 计算 delta，生成 child ServerSpeedItem   ← 已有
+      { IndexId = childId, ProxyUp, ProxyDown = 每秒 KB }
+    → 通过 _updateFunc 发布                              ← 已有
+  → ProfilesViewModel.UpdateStatistics()
+    → 设置 item.SpeedVal = format(ProxyUp + ProxyDown)   ← 新增
+```
+
+### 11.4 改动的文件
+
+| 文件 | 改动量 |
+|------|--------|
+| `ProfilesViewModel.cs` | +7 行 |
+
+`UpdateStatistics()` 方法中，在更新 TodayUp/TodayDown 之后追加：
+
+```csharp
+// When adaptive scheduling is active, show per-node real-time throughput in Speed column
+if (AdaptiveSchedulerManager.Instance.IsRunning)
+{
+    long totalKbps = update.ProxyUp + update.ProxyDown;
+    if (totalKbps >= 1024)
+        item.SpeedVal = $"{totalKbps / 1024.0:F1} MB/s";
+    else if (totalKbps > 0)
+        item.SpeedVal = $"{totalKbps} KB/s";
+}
+```
+
+### 11.5 设计决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 新增列？ | 否，复⽤现有 Speed 列 | 零 UI 改动，Speed 语义天然匹配 |
+| 改 `Speed` 字段？ | 否，只写 `SpeedVal` | `Speed` 是持久化测速值，不应被实时数据覆盖 |
+| 无流量时显示什么？ | 保持上次值或空 | 避免列频繁闪烁，流量恢复后自然更新 |
+| 单位 | KB/s 自动升档 MB/s | 与现有速度显示风格一致 |
+| Adaptive 关闭后？ | SpeedVal 自动恢复为测速值 | 下次表格刷新（`GetProfileItemsEx`）从 DB 读取原始值 |

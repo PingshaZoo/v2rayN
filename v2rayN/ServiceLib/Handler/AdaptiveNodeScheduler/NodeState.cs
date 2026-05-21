@@ -30,12 +30,6 @@ public sealed class NodeState
     public bool IsInCooldown => DateTime.UtcNow < _cooldownUntil;
     public DateTime CooldownUntil => _cooldownUntil;
 
-    // Active connection count via Interlocked, no lock needed
-    private int _activeConnections;
-    public int ActiveConnections => _activeConnections;
-    public void IncrementActive() => Interlocked.Increment(ref _activeConnections);
-    public void DecrementActive() => Interlocked.Decrement(ref _activeConnections);
-
     // Batch update — enter lock once, reduce contention
     public void UpdateScore(double latencyMs, double lossRate,
                             double score, int consecutiveFailures)

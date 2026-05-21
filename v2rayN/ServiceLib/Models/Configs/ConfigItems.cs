@@ -307,7 +307,7 @@ public class CfBestIpItem
 [Serializable]
 public class AdaptiveSchedulerItem
 {
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; } = false;
     public string ProbeUrl { get; set; } = "http://cp.cloudflare.com/";
     public int ProbeIntervalSec { get; set; } = 30;
     public int ProbeTimeoutMs { get; set; } = 5000;

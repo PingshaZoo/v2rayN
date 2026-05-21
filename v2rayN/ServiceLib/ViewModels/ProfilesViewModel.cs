@@ -334,6 +334,16 @@ public class ProfilesViewModel : MyReactiveObject
                 item.TodayUp = Utils.HumanFy(update.TodayUp);
                 item.TotalDown = Utils.HumanFy(update.TotalDown);
                 item.TotalUp = Utils.HumanFy(update.TotalUp);
+
+                // When adaptive scheduling is active, show per-node real-time throughput in Speed column
+                if (AdaptiveSchedulerManager.Instance.IsRunning)
+                {
+                    long totalKbps = update.ProxyUp + update.ProxyDown;
+                    if (totalKbps >= 1024)
+                        item.SpeedVal = $"{totalKbps / 1024.0:F1} MB/s";
+                    else if (totalKbps > 0)
+                        item.SpeedVal = $"{totalKbps} KB/s";
+                }
             }
         }
         catch
