@@ -346,6 +346,134 @@ CfBestIpHandler.RunAsync()
 
 ---
 
+## Adaptive 自适应节点调度
+
+> **状态：已实现 P0** | 日期：2026-05-21
+> **设计文档**: `CLAUDE-loadbalance.md` (v4.0) | **审计文档**: `adaptive-scheduler-final-audit.md` (v3.0)
+
+### 功能概述
+
+Adaptive Node Scheduler 是一个自适应节点调度系统，自动监控代理节点的健康状态，动态剔除坏节点并在恢复时重新加入。系统定位为 **Adaptive Active-Set Scheduler** — 核心目标是"坏节点自动消失"，不是"精确概率分流"。
+
+**解决的问题：**
+- 代理节点被 GFW 干扰或宕机后，用户需要手动切换节点
+- 传统手动测速方式无法持续追踪节点质量变化
+- 多节点负载均衡时，坏节点持续接收流量导致用户感知差
+
+**用户价值：**
+1. 坏节点自动从 active set 中移除，用户无感知
+2. 节点恢复后自动重新加入调度
+3. 冷启动时通过 Bootstrap 并行探活获得初始分数，避免首次请求命中死节点
+4. 支持一键紧急旁路（EmergencyDisableAdaptive），快速回退到默认配置
+
+### 架构总览
+
+```
+┌──────────────────────────────────────┐
+│ v2rayN (C# control plane — 不进入数据路径) │
+│                                      │
+│  ScoreCalculator → FailureCollector   │
+│       ↓              ↓               │
+│  NodeState[] ← CooldownFsm            │
+│       ↓                              │
+│  ActiveSetManager (top-K + hysteresis)│
+│       ↓                              │
+│  GenAdaptiveConfig (active-set       │
+│    balancer + probe inbounds)        │
+└──────────────┬───────────────────────┘
+               │ 生成 xray config.json
+               ▼
+┌──────────────────────────────────────┐
+│ xray-core (data plane, 完全黑盒)      │
+│ random balancer: active-set 内       │
+│ uniform random 选择                  │
+└──────────────────────────────────────┘
+```
+
+**架构约束**：C# 不进 Data Plane；调度由 xray random balancer 完成；C# 只维护分数 + 管理 active set + 生成配置。xray v26.3.27 确认对 balancer selector 做 prefix-match + dedup — tag duplication 加权无效。
+
+### 核心模块
+
+| 模块 | 文件 | 职责 |
+|------|------|------|
+| `AdaptiveSchedulerManager` | `AdaptiveSchedulerManager.cs` | 控制面编排器：初始化、启动/停止探活、MonitorActiveSet 循环、紧急旁路 |
+| `ScoreCalculator` | `ScoreCalculator.cs` | EWMA 评分：延迟参考上限 2000ms，延迟权重 0.55，丢包权重 0.45，平方放大 |
+| `FailureCollector` | `FailureCollector.cs` | 失败事件收集：按 FailureType 差异化惩罚（Refused=1.0, Timeout=0.8, NetworkError=0.7, UnexpectedEof=0.4, TlsError=no-op） |
+| `CooldownFsm` | `CooldownFsm.cs` | 冷却状态机：连续失败 ≥2 触发，指数退避 + ±20% jitter，全局上限 1/3 节点 |
+| `ActiveSetManager` | `ActiveSetManager.cs` | 活性集管理：top-K 选择 + explorer + hysteresis（Entry=60, Exit=35） |
+| `BootstrapProber` | `BootstrapProber.cs` | 冷启动探活：并行 TCP connect，2s 超时，全局 3s 截止，结果始终覆盖历史分数 |
+| `ProbeService` | `ProbeService.cs` | 运行时探活服务：通过 xray SOCKS5 入站发 HTTP HEAD 测量 TTFB |
+| `ScoreLogger` | `ScoreLogger.cs` | 分数快照日志：JSONL 格式，事件含 score_snapshot / cooldown_enter / active_set_change / xray_reload |
+| `ReloadPolicyApplier` | `ReloadPolicyApplier.cs` | 策略应用器（Phase 1 fallback）：trailing debounce 15s 后重生成 xray 配置 |
+
+### NodeState 关键字段
+
+| 属性 | 说明 |
+|------|------|
+| `Score` | QoS 分数 [1, 100]，决定 active-set membership，不控制 per-node 流量权重 |
+| `EwmaLatencyMs` | time-decayed EWMA 延迟（α 随观测间隔动态调整：0.05 + 0.25 × e^(−Δt/60)） |
+| `EwmaLossRate` | time-decayed EWMA 丢包率 |
+| `ConsecutiveFailures` | 连续失败计数，≥2 时 CooldownFsm 评估是否进入 cooldown |
+| `IsInCooldown` | 是否处于冷却期（cooldown 节点不参与 active set） |
+
+### 启动序列
+
+```
+T=0ms     InitializeNodes() — 构建 NodeState, 分配探活 SOCKS5 端口
+T=0ms     BootstrapAsync() — RestorePersistedScoresAsync → BootstrapProber 并行 TCP 探活
+T≤3000ms  Bootstrap 完成，返回初始 AdaptiveConfig（含 probe inbounds）
+T=3001ms  LoadCore — 首次 xray 配置加载（含探活入站）
+T≈4~5s    xray SOCKS5 ready（重启实测 ~1.1s）
+           StartProbesAsync() — ProbeService + ScoreLogger + MonitorActiveSet 启动
+T+15~30s  EWMA 逐步替代 Bootstrap 初始值
+```
+
+### Hysteresis 迟滞机制
+
+```
+进入 active set 门槛 (Entry): score ≥ 60  // 新节点需较高分数
+退出 active set 门槛 (Exit):  score < 35   // 已在集合中需大幅下降才退出
+缓冲带: 25 分                                // 防止 score 震荡导致频繁 xray reload
+
+Explorer: 每轮额外选 1 个 ≥35 分的未使用节点给予曝光机会，但不获得 sticky 状态
+```
+
+### 系统能力边界
+
+**能做到**：自动淘汰坏节点、自动恢复好节点、动态 active set、自适应学习（EWMA）、冷启动保护（Bootstrap）、防止震荡（hysteresis + debounce）、可回放 telemetry（JSONL）、一键紧急旁路
+
+**做不到**：真正 weighted routing（xray selector dedup）、per-request balancing、runtime probability shaping、transparent QUIC migration
+
+### EmergencyDisableAdaptive（紧急旁路）
+
+```csharp
+public async Task EmergencyDisableAdaptiveAsync()
+{
+    _adaptiveItem.Enabled = false;   // 标记禁用
+    await StopAsync();               // 停止探活/日志/policy applier
+    // 调用者负责重生成并加载默认 xray 配置
+}
+```
+
+### 测试覆盖
+
+| 测试文件 | 测试数 | 覆盖内容 |
+|---------|--------|---------|
+| `FailureCollectorTests.cs` | 9 | 各 FailureType 的 penaltyLoss/latency 值，TlsError no-op，相对惩罚排序 |
+| `BootstrapAndScorePersistenceTests.cs` | 5 | Score floor=1.0, worst-case 计算, Bootstrap 覆盖历史语义, 分数过期检测 |
+| `ActiveSetManagerTests.cs` | 12 | Entry/Exit 阈值, sticky 行为, oscillation 免疫, explorer 排除, cooldown 排除, 边界场景 |
+| `EmergencyDisableAdaptiveTests.cs` | 4 | 幂等性, IsRunning/GetCurrentConfig/Nodes/ProbePorts 清空 |
+| `XrayTagDuplicationIntegrationTests.cs` | 2 | xray selector dedup 行为契约检测（[A×3,B×1]→~50%），重启耗时测量（~1.1s） |
+| `CoreConfigV2rayServiceTests.cs` | 3 | active-set unique tags 生成，equal scores 每个出现一次，cooldown 排除 |
+
+### 设计文档引用
+
+- **设计文档**: [CLAUDE-loadbalance.md](CLAUDE-loadbalance.md) — 完整设计 v4.0（架构、数据结构、评分公式、状态机、代码骨架）
+- **审计文档**: [adaptive-scheduler-final-audit.md](adaptive-scheduler-final-audit.md) — 综合评审 v3.0（P0 已验证、行动计划、验收标准）
+- **测试**: [ServiceLib.Tests/AdaptiveNodeScheduler/](v2rayN/ServiceLib.Tests/AdaptiveNodeScheduler/)
+
+---
+
 ## 国际化支持
 
 ### 多语言

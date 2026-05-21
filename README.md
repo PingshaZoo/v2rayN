@@ -19,6 +19,7 @@ and [others](https://github.com/2dust/v2rayN/wiki/List-of-supported-cores)
 - Speed and latency testing
 - TUN mode support
 - **Cloudflare Best IP** — automatically probe and select optimal Cloudflare CDN IPs
+- **Adaptive Node Scheduler** — health-based active-set scheduling, auto-eject failed nodes
 
 ## Cloudflare Best IP
 
@@ -33,6 +34,22 @@ One-click Cloudflare CDN node optimization:
    - Exports optimized nodes and adds them to the `[CF优选]` group
    - POSTs all probe results to configured report URLs
 4. Select any node from the `[CF优选]` group to start using the optimized Cloudflare connection
+
+## Adaptive Node Scheduler
+
+Health-driven active-set scheduling for proxy nodes:
+
+1. Enable "Adaptive" in a custom group's settings (right-click → Edit Server → Adaptive)
+2. The scheduler automatically:
+   - Probes all nodes on startup (Bootstrap TCP connect)
+   - Monitors node health via passive observation and active HTTP HEAD probes
+   - Ejects failed nodes from the active set (cooldown with exponential backoff)
+   - Recovers nodes when they become healthy again (recovery probing)
+   - Uses hysteresis (Entry=60/Exit=35) to prevent flapping
+3. All nodes in the active set share traffic uniformly (xray random balancer)
+4. Emergency bypass: disable "Adaptive" checkbox to instantly restore default config
+
+Architecture: v2rayN C# control plane maintains scores + manages active set; xray-core data plane handles actual traffic routing. See `CLAUDE-loadbalance.md` and `adaptive-scheduler-final-audit.md` for design details.
 
 ## How to use
 
