@@ -43,29 +43,23 @@ public partial class CoreConfigV2rayService
             });
         }
 
-        // 3. Build weighted balancer selector via tag duplication.
-        // xray's random strategy picks uniformly from the selector list.
-        // Duplicating a tag N times gives it N× the selection probability.
-        // Weights are derived from QoS scores: high-score nodes appear more often.
-        // Cooldown nodes are excluded. xray's observatory is disabled —
-        // probing is handled by our ProbeService.
-        var scores = adaptive.NodeScores;
+        // 3. Build active-set balancer selector.
+        // xray's random balancer picks uniformly from the selector candidates
+        // (each unique tag gets one entry). xray deduplicates selector entries
+        // internally via prefix-match + dedup, so tag duplication does NOT work
+        // for weighting (verified: xray v26.3.27, selector [A,A,A,B] → A=47.6%).
+        //
+        // The system is an Adaptive Active-Set Scheduler:
+        //   - Bad nodes are ejected from the active set (cooldown / low score)
+        //   - Nodes within the active set share traffic uniformly
+        //   - xray's observatory is disabled — probing is handled by our ProbeService
         var activeTags = adaptive.ActiveTags;
-        var weightedSelector = proxyOutboundList
+        var activeSelector = proxyOutboundList
             .Where(o => activeTags.Count == 0 || activeTags.Contains(o.tag))
-            .SelectMany(o =>
-            {
-                int copies = 1;
-                if (scores.TryGetValue(o.tag, out double s))
-                {
-                    if (s >= 70) copies = 3;
-                    else if (s >= 40) copies = 2;
-                }
-                return Enumerable.Repeat(o.tag, copies);
-            })
+            .Select(o => o.tag)
             .ToList();
 
-        if (weightedSelector.Count > 1)
+        if (activeSelector.Count > 1)
         {
             _coreConfig.observatory = null;
 
@@ -73,7 +67,7 @@ public partial class CoreConfigV2rayService
             _coreConfig.routing.balancers ??= new();
             _coreConfig.routing.balancers.Add(new BalancersItem4Ray
             {
-                selector = weightedSelector,
+                selector = activeSelector,
                 strategy = new()
                 {
                     type = "random",
@@ -89,9 +83,9 @@ public partial class CoreConfigV2rayService
                 finalRule.outboundTag = null;
             }
         }
-        else if (weightedSelector.Distinct().Count() == 1)
+        else if (activeSelector.Count == 1)
         {
-            var singleTag = weightedSelector[0];
+            var singleTag = activeSelector[0];
             var finalRule = _coreConfig.routing.rules
                 .FirstOrDefault(r => r.outboundTag == Global.ProxyTag);
             if (finalRule != null)

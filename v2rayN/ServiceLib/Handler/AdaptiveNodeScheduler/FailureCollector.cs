@@ -28,16 +28,42 @@ public sealed class FailureCollector
     public void RecordFailure(NodeState node, FailureType type,
                               IReadOnlyList<NodeState> allNodes)
     {
+        // TlsError is a configuration error, not a network quality signal.
+        // Do not penalize EWMA and do not enter cooldown.
+        if (type == FailureType.TlsError)
+        {
+            // Log: $"TlsError on {node.Tag} — check TLS configuration"
+            return;
+        }
+
+        (double penaltyLoss, double penaltyLatencyMs) = GetPenalty(type, node);
+
         double alpha = DecayedAlpha(node.LastObserved);
 
-        double newLatency = Ewma(node.EwmaLatencyMs, 10_000, alpha);
-        double newLoss = Ewma(node.EwmaLossRate, 1.0, alpha);
+        double newLatency = Ewma(node.EwmaLatencyMs, penaltyLatencyMs, alpha);
+        double newLoss = Ewma(node.EwmaLossRate, penaltyLoss, alpha);
         double newScore = _scorer.Compute(newLatency, newLoss);
         int newFails = node.ConsecutiveFailures + 1;
 
         node.UpdateScore(newLatency, newLoss, newScore, newFails);
         _cooldown.TryEnterCooldown(node, allNodes);
     }
+
+    /// <summary>
+    /// Returns (penaltyLoss, penaltyLatencyMs) per failure type.
+    /// TlsError returns (0, unchanged) — configuration errors are not network quality.
+    /// </summary>
+    public static (double penaltyLoss, double penaltyLatencyMs) GetPenalty(
+        FailureType type, NodeState node) =>
+        type switch
+        {
+            FailureType.Refused => (1.0, 10_000),
+            FailureType.Timeout => (0.8, 10_000),
+            FailureType.NetworkError => (0.7, 10_000),
+            FailureType.UnexpectedEof => (0.4, node.EwmaLatencyMs * 1.5),
+            FailureType.TlsError => (0.0, node.EwmaLatencyMs),
+            _ => (0.5, 10_000),
+        };
 
     private static double DecayedAlpha(DateTime lastObserved)
     {

@@ -2,7 +2,7 @@ namespace ServiceLib.Models.CoreConfigs;
 
 /// <summary>
 /// Adaptive scheduling configuration passed to the core config generator.
-/// Describes the probe inbounds and weighted balancer selector.
+/// Describes the probe inbounds and active-set balancer selector.
 /// </summary>
 public record AdaptiveConfig
 {
@@ -16,8 +16,9 @@ public record AdaptiveConfig
     public required IReadOnlyDictionary<string, int> ProbePorts { get; init; }
 
     /// <summary>Maps node tag → current QoS score [1, 100]. Used by config generator
-    /// to build a weighted selector via tag duplication (high-score nodes appear
-    /// more times in the balancer's random selector).</summary>
+    /// to build the active-set selector. All active-set nodes appear once
+    /// (uniform random via xray balancer). Scores determine active-set membership,
+    /// not per-node traffic weighting.</summary>
     public IReadOnlyDictionary<string, double> NodeScores { get; init; } = new Dictionary<string, double>();
 
     /// <summary>Maps node outbound tag → child ProfileItem IndexId.

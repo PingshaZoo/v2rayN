@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using ServiceLib.Common;
 using ServiceLib.Enums;
 using ServiceLib.Models;
+using ServiceLib.Models.CoreConfigs;
 using ServiceLib.Services.CoreConfig;
 using Xunit;
 
@@ -536,4 +537,186 @@ public class CoreConfigV2rayServiceTests
         directOutbound.Should().NotBeNull();
         directOutbound!.settings.domainStrategy.Should().Be("UseIPv4");
     }
+
+    #region Adaptive Scheduling — Active-Set Balancer Tests
+
+    /// <summary>
+    /// Active-set balancer: each active tag appears exactly once in the selector.
+    /// Scores do NOT affect selector duplication — xray deduplicates entries anyway
+    /// (verified: xray v26.3.27, selector [A,A,A,B] → A=47.6% ≈ uniform).
+    /// The system is an Adaptive Active-Set Scheduler: bad nodes are ejected,
+    /// nodes within the active set share traffic uniformly via xray random balancer.
+    /// </summary>
+    [Fact]
+    public void GenerateClientConfigContent_AdaptiveConfig_ShouldUseActiveSetUniformRandom()
+    {
+        var config = CoreConfigTestFactory.CreateConfig(ECoreType.Xray);
+        CoreConfigTestFactory.BindAppManagerConfig(config);
+
+        var n1 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n1", "node-fast");
+        var n2 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n2", "node-slow");
+        var group = CoreConfigTestFactory.CreatePolicyGroupNode(ECoreType.Xray, "g1", "group",
+            [n1.IndexId, n2.IndexId]);
+
+        var context = CoreConfigTestFactory.CreateContext(config, group, ECoreType.Xray);
+        context.AllProxiesMap[n1.IndexId] = n1;
+        context.AllProxiesMap[n2.IndexId] = n2;
+        context.AllProxiesMap[group.IndexId] = group;
+
+        // First generate without adaptive to get the tag names
+        var result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        var cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+        var proxyOutbounds = cfg.outbounds.Where(o => o.tag.StartsWith(Global.ProxyTag + "-")).ToList();
+        proxyOutbounds.Should().HaveCount(2);
+
+        var fastTag = proxyOutbounds[0].tag;
+        var slowTag = proxyOutbounds[1].tag;
+
+        // Active-set config: both nodes active, scores are high/low — no duplication
+        context = context with
+        {
+            AdaptiveConfig = new AdaptiveConfig
+            {
+                ActiveTags = [fastTag, slowTag],
+                CooldownTags = [],
+                ProbePorts = new Dictionary<string, int>(),
+                NodeScores = new Dictionary<string, double>
+                {
+                    [fastTag] = 90.0,
+                    [slowTag] = 30.0,
+                },
+                TagToIndexId = new Dictionary<string, string>
+                {
+                    [fastTag] = n1.IndexId,
+                    [slowTag] = n2.IndexId,
+                },
+            }
+        };
+
+        result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        result.Success.Should().BeTrue();
+        cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+
+        cfg.routing.balancers.Should().NotBeNull("adaptive config should produce a balancer");
+        var balancer = cfg.routing.balancers!.FirstOrDefault(b => b.tag == Global.ProxyTag + Global.BalancerTagSuffix);
+        balancer.Should().NotBeNull("balancer with proxy-round tag should exist");
+        balancer!.selector.Should().NotBeNull();
+        balancer.selector.Should().HaveCount(2, "each active tag appears exactly once — no duplication");
+
+        balancer.selector.Should().Contain(fastTag);
+        balancer.selector.Should().Contain(slowTag);
+
+        balancer.strategy!.type.Should().Be("random");
+    }
+
+    /// <summary>
+    /// Multiple active nodes produce a selector with one entry each (uniform random).
+    /// Scores are irrelevant to selector construction.
+    /// </summary>
+    [Fact]
+    public void GenerateClientConfigContent_AdaptiveConfig_MultipleActiveNodes_ShouldEachAppearOnce()
+    {
+        var config = CoreConfigTestFactory.CreateConfig(ECoreType.Xray);
+        CoreConfigTestFactory.BindAppManagerConfig(config);
+
+        var n1 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n1", "node-a");
+        var n2 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n2", "node-b");
+        var group = CoreConfigTestFactory.CreatePolicyGroupNode(ECoreType.Xray, "g1", "group",
+            [n1.IndexId, n2.IndexId]);
+
+        var context = CoreConfigTestFactory.CreateContext(config, group, ECoreType.Xray);
+        context.AllProxiesMap[n1.IndexId] = n1;
+        context.AllProxiesMap[n2.IndexId] = n2;
+        context.AllProxiesMap[group.IndexId] = group;
+
+        // First pass to get tag names
+        var result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        var cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+        var proxyOutbounds = cfg.outbounds.Where(o => o.tag.StartsWith(Global.ProxyTag + "-")).ToList();
+        var tagA = proxyOutbounds[0].tag;
+        var tagB = proxyOutbounds[1].tag;
+
+        context = context with
+        {
+            AdaptiveConfig = new AdaptiveConfig
+            {
+                ActiveTags = [tagA, tagB],
+                CooldownTags = [],
+                ProbePorts = new Dictionary<string, int>(),
+                NodeScores = new Dictionary<string, double> { [tagA] = 80.0, [tagB] = 80.0 },
+                TagToIndexId = new Dictionary<string, string> { [tagA] = n1.IndexId, [tagB] = n2.IndexId },
+            }
+        };
+
+        result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+
+        var balancer = cfg.routing.balancers!.First(b => b.tag == Global.ProxyTag + Global.BalancerTagSuffix);
+        balancer.selector.Should().HaveCount(2, "each active node appears exactly once");
+        balancer.selector.Should().Contain(tagA);
+        balancer.selector.Should().Contain(tagB);
+        balancer.strategy!.type.Should().Be("random");
+    }
+
+    /// <summary>
+    /// Nodes in cooldown should be excluded from the balancer selector entirely.
+    /// </summary>
+    [Fact]
+    public void GenerateClientConfigContent_AdaptiveConfig_CooldownNode_ShouldBeExcluded()
+    {
+        var config = CoreConfigTestFactory.CreateConfig(ECoreType.Xray);
+        CoreConfigTestFactory.BindAppManagerConfig(config);
+
+        var n1 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n1", "node-active");
+        var n2 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n2", "node-cooldown");
+        var n3 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n3", "node-active2");
+        var group = CoreConfigTestFactory.CreatePolicyGroupNode(ECoreType.Xray, "g1", "group",
+            [n1.IndexId, n2.IndexId, n3.IndexId]);
+
+        var context = CoreConfigTestFactory.CreateContext(config, group, ECoreType.Xray);
+        context.AllProxiesMap[n1.IndexId] = n1;
+        context.AllProxiesMap[n2.IndexId] = n2;
+        context.AllProxiesMap[n3.IndexId] = n3;
+        context.AllProxiesMap[group.IndexId] = group;
+
+        var result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        var cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+        var tags = cfg.outbounds.Where(o => o.tag.StartsWith(Global.ProxyTag + "-")).Select(o => o.tag).ToList();
+        tags.Should().HaveCount(3);
+        var active1 = tags[0];
+        var cooldown = tags[1];
+        var active2 = tags[2];
+
+        context = context with
+        {
+            AdaptiveConfig = new AdaptiveConfig
+            {
+                ActiveTags = [active1, active2],
+                CooldownTags = [cooldown],
+                ProbePorts = new Dictionary<string, int>(),
+                NodeScores = new Dictionary<string, double>
+                {
+                    [active1] = 80.0,
+                    [active2] = 80.0,
+                    [cooldown] = 5.0,
+                },
+                TagToIndexId = new Dictionary<string, string>
+                {
+                    [active1] = n1.IndexId,
+                    [cooldown] = n2.IndexId,
+                    [active2] = n3.IndexId,
+                },
+            }
+        };
+
+        result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+
+        var balancer = cfg.routing.balancers!.First(b => b.tag == Global.ProxyTag + Global.BalancerTagSuffix);
+        balancer.selector.Should().NotContain(cooldown, "cooldown node should be excluded from selector");
+        balancer.selector.Should().Contain(active1);
+        balancer.selector.Should().Contain(active2);
+    }
+
+    #endregion
 }

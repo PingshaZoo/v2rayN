@@ -74,6 +74,24 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         };
     }
 
+    /// <summary>
+    /// Emergency bypass: immediately stops all adaptive scheduling, probe services,
+    /// and telemetry. Sets Enabled=false so subsequent config generation produces
+    /// default (non-adaptive) xray config. Does NOT restart xray — the caller
+    /// must regenerate and reload config after calling this.
+    /// </summary>
+    public async Task EmergencyDisableAdaptiveAsync()
+    {
+        if (!_isRunning) return;
+
+        if (_adaptiveItem != null)
+            _adaptiveItem.Enabled = false;
+
+        await StopAsync();
+
+        await _updateFunc!(false, $"[{_tag}] Adaptive scheduling emergency-disabled. Restore default xray config.");
+    }
+
     // ── Phase 1: synchronous init (call BEFORE LoadCore) ────
 
     /// <summary>
@@ -115,7 +133,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     /// Runs parallel TCP-connect probes to all nodes to seed initial scores.
     /// Does NOT require xray-core to be running — probes connect directly to remote hosts.
     /// Call after <see cref="InitializeNodes"/> and before the first LoadCore so the
-    /// initial weighted balancer selector uses real latency data, not defaults.
+    /// initial active-set balancer selector uses real latency data, not defaults.
     /// </summary>
     public async Task BootstrapAsync()
     {

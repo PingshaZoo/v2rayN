@@ -18,7 +18,7 @@ public sealed class ReloadPolicyApplier : IAdaptivePolicyApplier
     private AdaptiveConfig? _pendingConfig;
     private CancellationTokenSource? _debounceCts;
     private bool _disposed;
-    private static readonly TimeSpan MinReloadInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MinReloadInterval = TimeSpan.FromSeconds(15);
 
     public ReloadPolicyApplier(Func<AdaptiveConfig, Task> reloadFunc)
     {

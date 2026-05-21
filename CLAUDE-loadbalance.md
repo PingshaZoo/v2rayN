@@ -1,9 +1,9 @@
-# v2rayN 自适应节点调度器设计文档 v2.0
+# v2rayN 自适应节点调度器设计文档
 
-**版本**: 2.0（综合 Claude 架构评审 + ChatGPT 工程反馈修订）  
-**目标**: 实现类 SSR 动态 QoS 调度体验，基于被动学习而非主动测速  
+**版本**: 4.0（2026-05-21 P0 验证：tag duplication 确认无效，系统重定位为 Active-Set Scheduler）  
+**目标**: 动态剔除坏节点，保持 active-set 内节点可用。类 SSR 体验：坏节点自动消失，好节点稳定在线  
 **约束**: C# / Windows / v2rayN 架构，不 fork xray-core  
-**定位**: 轻量 adaptive routing，不是 SD-WAN，不是网络科研项目
+**定位**: Adaptive Active-Set Scheduler — **核心目标是"动态剔除坏节点"，不是"精确概率分流"**
 
 ---
 
@@ -16,9 +16,11 @@
 5. [模块详细设计](#5-模块详细设计)
 6. [评分公式与数学基础](#6-评分公式与数学基础)
 7. [节点状态机与生命周期](#7-节点状态机与生命周期)
-8. [关键代码骨架（完整可落地版）](#8-关键代码骨架)
-9. [Phase 落地计划](#9-phase-落地计划)
-10. [关键决策备忘](#10-关键决策备忘)
+8. [关键代码骨架](#8-关键代码骨架)
+9. [行动计划（v3.0）](#9-行动计划v30基于-2026-05-21-综合评审)
+10. [验收标准](#10-验收标准)
+11. [关键决策备忘](#11-关键决策备忘)
+12. [实时节点速度显示](#12-实时节点速度显示real-time-node-speed-display)
 
 ---
 
@@ -285,37 +287,74 @@ migration、大量 background probes。
 | 高频主动测速 | 干扰正常流量，且无法代表真实业务质量 |
 | 复杂 ML 模型 | 维护成本远超收益，v2rayN 不是科研项目 |
 
-### 3.2 架构层次
+### 3.2 架构层次（实际实现）
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │                  v2rayN 进程（C#）                    │
 │                                                      │
 │  ┌────────────────────────────────────────────────┐  │
-│  │            Dispatch Layer（调度层）              │  │
-│  │   weighted random 选节点 · 连接级粒度            │  │
-│  │   只读 ScoreTable，不写                          │  │
+│  │        Control Plane（控制面，不进入数据路径）        │  │
+│  │                                                │  │
+│  │  ScoreCalculator → FailureCollector             │  │
+│  │         ↓              ↓                       │  │
+│  │    NodeState[] ← CooldownFsm                    │  │
+│  │         ↓                                      │  │
+│  │    ActiveSetManager（top-K + hysteresis）        │  │
+│  │         ↓                                      │  │
+│  │    GenAdaptiveConfig（active-set selector + 探活入站）│  │
 │  └───────────────────────┬────────────────────────┘  │
-│                          │ 读分数                     │
-│  ┌───────────────────────▼────────────────────────┐  │
-│  │         Node State Machine（节点状态机）         │  │
-│  │   NodeState · CooldownFsm · BootstrapProber    │  │
-│  └───────────────────────┬────────────────────────┘  │
-│                          │ 被动反馈写入               │
-│  ┌───────────────────────▼────────────────────────┐  │
-│  │        Measurement Layer（测量层）               │  │
-│  │   TtfbProber · FailureCollector · StatsPoller  │  │
-│  └───────────────────────┬────────────────────────┘  │
-│                          │ Stats gRPC（只读）          │
+│                          │ 生成 xray config.json      │
+│                          │ （active-set unique tags + probe inbounds）│
 └──────────────────────────┼───────────────────────────┘
                            │
 ┌──────────────────────────▼───────────────────────────┐
 │              xray-core（完全黑盒，不修改）              │
-│       Stats API: bytes_sent/recv per outbound tag     │
+│                                                      │
+│  random balancer: 按 selector 列表等概率随机选 tag     │
+│  重复 tag ×N → 该节点被选中概率放大 N 倍               │
+│                                                      │
+│  Stats API: bytes_sent/recv per outbound tag         │
 └──────────────────────────────────────────────────────┘
 ```
 
-**层间规则**：调度层只读分数表；分数表只由测量层写入；xray-core 完全黑盒。
+**核心机制**：xray `random` balancer 对 selector 不做去重。`[A, A, A, B]` → A 命中率 75%。
+C# 控制面根据分数生成重复次数（高分多重复），xray 侧自然实现概率加权调度。
+
+**⚠️ P0 待验证**：此行为依赖 xray 内部实现细节，未被文档化为正式 API。必须在集成测试中验证通过才能算稳定。详见 §9 行动计划。
+
+**层间规则**：C# 不进 Data Plane；调度由 xray 完成；C# 只维护分数 + 生成配置。
+
+### 3.2a 系统能力边界
+
+当前架构有能力做到的和做不到的，必须明确区分。这既是工程诚实，也是防止后续开发在不成立的假设上叠 hack。
+
+**能做到**：
+
+| 能力 | 实现方式 |
+|------|---------|
+| 自动淘汰坏节点 | cooldown FSM + active set 驱逐 |
+| 自动恢复好节点 | cooldown 到期 + recovery probing + hysteresis 重新进入 |
+| 动态 active set | score 驱动的 top-K + explorer + hysteresis 进出管理 |
+| 自适应学习 | time-decayed EWMA（观测越久远影响越小） |
+| 冷启动保护 | Bootstrap 并行 TCP connect 探活，覆盖过期历史分数 |
+| 防止震荡 | hysteresis 缓冲带（Entry=60/Exit=35）+ debounce 防抖 |
+| 可回放 telemetry | JSONL 独立日志，每事件一行，jq 可解析 |
+| 一键紧急旁路 | EmergencyDisableAdaptive()，恢复默认配置，不重启 |
+
+**做不到（当前架构约束）**：
+
+| 限制 | 原因 |
+|------|------|
+| 真正 weighted routing | xray selector 对 candidates 做 prefix-match + dedup，tag 重复无效 |
+| per-request balancing | 调度粒度为连接级（TCP connection），非请求级 |
+| runtime probability shaping | xray 无动态 balancer API（`RandomStrategy.PickOutbound` 不可远程控制） |
+| transparent QUIC migration | QUIC 连接语义与 TCP 完全不同，需独立节点池（Phase 3） |
+| 全局最优计算 | 所有流量压单节点会压死该节点，必须维持 active set 分散 |
+
+**核心原则**：系统定位为 Adaptive Health-Control Scheduler。核心价值是"坏节点自动消失"，不是"精确概率分流"。用户真正感知到的是坏节点自动消失，而不是 75% vs 25% 的 routing precision。
+
+> **架构规则**：禁止继续在 weighted routing 上叠 hack。tag duplication 已被证实无效。任何新的加权方案必须在 xray 源码级验证 selector 行为后，才能进入设计阶段。Phase 1/2 坚持 active-set uniform random。
 
 ### 3.3 连接粒度
 
@@ -535,9 +574,35 @@ public record ProbeResult(bool Success, double TtfbMs, FailureType Type);
 public enum FailureType { None, Timeout, Refused, TlsError, NetworkError, UnexpectedEof }
 ```
 
+**探活策略（ProbeService / TtfbProber 触发规则）**
+
+探活是在不 fork xray 前提下唯一可行的延迟观测手段，但会产生额外 HTTP 流量。触发条件必须明确分层：
+
+```
+触发条件（推荐策略）：
+  1. Bootstrap 阶段   — 并行探活所有节点，一次性（TCP connect，3s 全局超时）
+  2. Cooldown 恢复     — 到期前 5s 触发一次 TTFB 探活（3s 超时）
+                        成功 → 立即清除 cooldown；失败 → 延长 cooldown
+  3. 周期性补充（可选） — 低分节点（score < 20）每 2 分钟探一次
+  4. 正常节点          — 不主动探活，依赖被动观测
+
+探活并发上限：max(3, ceil(N / 5))，N 为节点总数
+探活 URL：http://cp.cloudflare.com/（可配置，建议暴露到 Settings UI）
+多目标探测：建议支持配置多个 ProbeUrl，取平均值减少单一目标偶发抖动
+```
+
+**探活偏差（Probe Bias）说明**
+
+TTFB via HTTP HEAD 到 `cp.cloudflare.com` 是业务延迟的"代理指标"，不是真实业务 RTT。探活结果与 YouTube chunk、HTTP/2 多路复用、WebSocket 等真实流量的延迟存在系统偏差。这是已知约束：在 xray 不暴露 socket 级指标的架构下，TTFB 是唯一可行的延迟观测手段。
+
+建议：如果用户业务主要是视频流，可选配置 `connectivitycheck.gstatic.com/generate_204` 等更接近真实业务路径的目标。
+
 ---
 
-### 5.3 FailureCollector — 失败事件收集器
+### 5.3 FailureCollector — 失败事件收集器（差异化惩罚）
+
+> **P0 修复** (2026-05-21): 所有 FailureType 不应使用统一的 `lossRate = 1.0` 更新 EWMA。
+> 不同类型代表完全不同的根因，应差异化惩罚。
 
 ```csharp
 public sealed class FailureCollector {
@@ -558,10 +623,24 @@ public sealed class FailureCollector {
 
     public void RecordFailure(NodeState node, FailureType type,
                               IReadOnlyList<NodeState> allNodes) {
-        double alpha = DecayedAlpha(node.LastObserved);
+        (double loss, double lat) = type switch {
+            FailureType.Refused       => (1.0,   10_000),        // 端口不通，强惩罚
+            FailureType.Timeout       => (0.8,   10_000),        // 可能 GFW，中强惩罚
+            FailureType.NetworkError  => (0.7,   10_000),        // 通用网络错误
+            FailureType.UnexpectedEof => (0.4,   node.EwmaLatencyMs * 1.5),  // 连接断开，弱惩罚
+            FailureType.TlsError      => (0.0,   node.EwmaLatencyMs),         // 配置错误，不惩罚
+            _                         => (0.5,   10_000),
+        };
 
-        double newLatency = Ewma(node.EwmaLatencyMs, 10_000, alpha); // 超时值
-        double newLoss    = Ewma(node.EwmaLossRate,  1.0,    alpha);
+        // TlsError 不惩罚 EWMA，触发独立告警路径
+        if (type == FailureType.TlsError) {
+            // _alertService.RaiseTlsConfigError(node.Tag);
+            return; // 不更新 score，不进入 cooldown
+        }
+
+        double alpha = DecayedAlpha(node.LastObserved);
+        double newLatency = Ewma(node.EwmaLatencyMs, lat, alpha);
+        double newLoss    = Ewma(node.EwmaLossRate,  loss, alpha);
         double newScore   = _scorer.Compute(newLatency, newLoss);
         int newFails      = node.ConsecutiveFailures + 1;
 
@@ -629,7 +708,27 @@ public sealed class CooldownFsm {
 
 ---
 
-### 5.5 XrayStatsPoller — xray Stats API 轮询器
+### 5.5 ActiveSetManager — 活性集管理
+
+> **本节为实际实现补充。** 设计文档 v1.0 未包含此模块，它是 active-set 调度方案的核心基础设施。
+
+**职责**：管理哪些节点应该出现在 xray balancer selector 中。不直接调度连接（xray 负责），但决定调度器的输入列表。active-set 内流量均匀分配。
+
+**Top-K 公式**（已文档化）：
+
+```
+K = max(3, ceil(total_nodes × 0.5))      # 至少 3 个，最多占非 cooldown 节点一半
+explorer_count = max(1, floor(K × 0.15))  # 约 15%，至少 1 个
+explorer 来源 = 分数最低的非 cooldown 节点（给低分节点保持曝光机会）
+```
+
+explorer 节点每个周期变化（随机选取），但 explorer 的变化**不触发** active set change → 不引起 reload。只有 top-K 集合变化才触发。
+
+**迟滞检查（HasActiveSetChanged）**：只比较 top-K 集合是否变化。单节点进入/退出 cooldown 虽然会改变 active 集合，但由 score 驱动的 top-K 变化才触发 config 重生成。每次 Explorer 轮换不触发。
+
+---
+
+### 5.6 XrayStatsPoller — xray Stats API 轮询器
 
 ```csharp
 public sealed class XrayStatsPoller : IAsyncDisposable {
@@ -688,53 +787,50 @@ public sealed class XrayStatsPoller : IAsyncDisposable {
 
 ---
 
-### 5.6 AdaptiveDispatcher — 调度器
+### 5.7 Balancer — Active-Set Uniform Random（v4.0 修订）
 
-```csharp
-public sealed class AdaptiveDispatcher {
-    private readonly IReadOnlyList<NodeState> _nodes;
-    private readonly FailureCollector         _collector;
-    private readonly TtfbProber               _prober;
+> **v4.0 修订**: 2026-05-21 集成测试证实 xray v26.3.27 对 selector 做 prefix-match + 去重。
+> `selector: ["A", "A", "A", "B"]` → 去重后 candidates = `["A", "B"]` → 50/50 均匀随机。
+> **tag duplication 从未生效。** 系统重定位为 Adaptive Active-Set Scheduler。
 
-    public NodeState Select(ProxyProtocol protocol) {
-        var pool = _nodes.Where(n => n.Protocol == protocol).ToList();
-        var live = pool.Where(n => !n.IsInCooldown).ToList();
+**当前行为**：
+- active-set 内的节点通过 xray `random` balancer 均匀分配流量
+- 坏节点被 cooldown / hysteresis 逐出 active set，不参与调度
+- 核心价值是"动态剔除坏节点"，不是"精确概率分流"
 
-        // 兜底：全部 cooldown 时选剩余时间最短的
-        if (live.Count == 0)
-            return pool.MinBy(n => n.CooldownUntil)
-                   ?? throw new InvalidOperationException("No nodes configured.");
+**v3.0 弃用方案（tag duplication）**：
+- 设计意图：selector 中重复 tag N 次 → N× 选中概率
+- 实测结果：xray `SelectOutbounds()` 对 candidate outbound tags 做 prefix-match + 去重
+- 结论：依赖 xray selector 内部实现细节做加权是不可行的
 
-        return WeightedRandom(live);
-    }
-
-    private static NodeState WeightedRandom(List<NodeState> candidates) {
-        double total = candidates.Sum(n => n.Score);
-        double roll  = Random.Shared.NextDouble() * total;
-        double cum   = 0;
-        foreach (var n in candidates) {
-            cum += n.Score;
-            if (roll < cum) return n;
-        }
-        return candidates[^1]; // 浮点精度保底
-    }
-
-    // 连接完成后调用（由调用方在 using 块或 finally 中触发）
-    public async Task OnConnectionCompletedAsync(NodeState node,
-                                                 bool success,
-                                                 FailureType failureType,
-                                                 IReadOnlyList<NodeState> allNodes) {
-        if (success) {
-            // 成功：主动探测一次 TTFB 获取精确延迟
-            var r = await _prober.ProbeAsync(node.Tag).ConfigureAwait(false);
-            if (r.Success)
-                _collector.RecordSuccess(node, r.TtfbMs);
-        } else {
-            _collector.RecordFailure(node, failureType, allNodes);
-        }
-    }
-}
+**xray selector 语义（已验证）**：
+```go
+// app/router/balancing.go SelectOutbounds()
+// 1. 每个 selector 字符串做 strings.HasPrefix 匹配所有 outbound tag
+// 2. 收集匹配的 outbound tag
+// 3. 去重 → 传给 RandomStrategy.PickOutbound(candidates)
 ```
+> **P0 行为契约**: 见 `XrayTagDuplicationIntegrationTests`。若未来 xray 修改 selector 语义（不去重），此测试会报警。
+
+**核心原理**：
+```
+xray random balancer: rand.Intn(len(tags)) → 每个 tag 等概率
+selector = [A, A, A, B] → P(A) = 75%, P(B) = 25%
+selector = [A, A, B, B] → P(A) = 50%, P(B) = 50%
+```
+
+**tag 重复次数规则**：
+```
+tag_count = max(1, round(score / 25))   // score 100 → 4 次; score 25 → 1 次
+floor = 1（所有节点至少 1 次，保留调度资格）；cooldown 节点不出现
+```
+
+**⚠️ P0 警告**: 此方案依赖 xray `random` balancer 不对 selector **做去重** 这一**隐式行为**。
+xray 从未将此行为文档化为正式 API。任何版本更新都可能静默破坏此行为，且不会被视为 breaking change。
+因此这是一个需要集成测试验证并加版本检查的 P0 级风险项。详见 §9 行动计划。
+
+```
+
 
 ---
 
@@ -810,7 +906,7 @@ public sealed class ScoreCalculator {
 ```
               [初始化]
                  │
-           Bootstrap 探活
+           恢复历史分数 + Bootstrap 探活
           ┌──────┴──────┐
         成功            失败
        Score>1        Score=1
@@ -825,8 +921,8 @@ public sealed class ScoreCalculator {
            [COOLDOWN]                                 │
                  │                                    │
                  │ 到期前 5s → 触发 TTFB 探活          │
-                 │   ├─ 探活失败 → 重置 cooldown       │
-                 │   └─ 探活成功 → 等待自然到期         │
+                 │   ├─ 探活成功 → 立即清除 cooldown   │
+                 │   └─ 探活失败 → 延长 cooldown       │
                  │                                    │
                  │ cooldown 自然到期                   │
                  ▼                                    │
@@ -838,19 +934,66 @@ public sealed class ScoreCalculator {
 **全局约束**：COOLDOWN 状态节点数 ≤ floor(总节点数 / 3)。
 超出上限时，新的失败节点改为降权处理（Score × 0.5），不进 cooldown。
 
-### 7.2 启动序列
+### 7.1a Active Set Hysteresis（迟滞机制）
+
+> **P0 新增** (2026-05-21): 防止 score 在阈值附近震荡导致频繁 reload。
+
+如果 active set 的进出门槛相同，节点 score 在 45~55 之间波动时会产生频繁的进出 active set，
+每次变化都触发 xray reload（连接中断）。迟滞形成缓冲区：
 
 ```
-T=0ms    加载节点配置，所有节点 Score=50（未知状态）
-T=0ms    BootstrapProber 并行探活所有节点（TCP connect，2s 超时）
-T=0ms    XrayStatsPoller 启动（不阻塞调度）
-T≤3000ms Bootstrap 完成（全局超时 3s 强制结束）
-T=3001ms 调度器开始接受连接请求（使用 Bootstrap 结果的初始分数）
-T+…      被动观测逐步替代 Bootstrap 初始值
-T+30s    第一批 EWMA 数据基本稳定
+进入门槛（Entry threshold）: score > 60     // 新节点需要较高分数才能进入
+退出门槛（Exit  threshold）: score < 35     // 已在集合中的节点分数大幅下降才退出
+缓冲带: 25 分                                // 防止震荡
 ```
 
-### 7.3 TCP vs UDP/QUIC 隔离
+```csharp
+bool ShouldBeActive(NodeState node, bool currentlyActive) =>
+    currentlyActive
+        ? node.Score >= 35   // 节点已在 active set，维持到分数降至 35 以下
+        : node.Score >= 60;  // 节点不在 active set，需要 60 以上才进入
+```
+
+### 7.2 启动序列（含实际时间线）
+
+```
+T=0ms      加载节点配置
+           → 有历史分数: 恢复到 NodeState（作为初始值）
+           → 无历史分数: 所有节点 Score=50（初始值）
+T=0ms      BootstrapProber 并行 TCP connect 探活所有节点（2s 超时，全局 3s 超时）
+           → Bootstrap 结果**始终覆盖**历史分数，防止过期高分掩盖已死亡节点
+           → 历史分数过期机制：超过 4 小时的持久化分数强制回退到 50
+T≤3000ms   Bootstrap 完成
+T=3001ms   GenAdaptiveConfig：生成含 active-set selector 的 xray balancer 配置
+T=3001ms+  xray 重启（实测耗时 ~1.1s，Windows 10, xray v26.3.27）
+T≈4~5s     调度生效，流量开始在 active-set 内均匀分布
+T=3001ms+  ProbeService + ScoreLogger + MonitorActiveSet 启动
+T+15~30s   第一批被动观测 EWMA 数据逐步替代 Bootstrap 初始值
+```
+
+**调度响应延迟上界（active set 变化 → 流量切换完成）**：
+
+```
+节点质量恶化
+  → EWMA 反映（取决于探活/被动观测频率）：T₁ (5~10s)
+  → active set 更新（MonitorActiveSet 检查间隔）：5s
+  → debounce 等待（ReloadPolicyApplier trailing）：15s
+  → xray 重启（实测）：~1.1s
+总计上限：15s + T₁ + 5s + 1.1s ≈ 22~27s
+```
+
+对比修改前（debounce 30s）：上限约 37~42s。debounce 降至 15s 后延迟缩短约 40%。
+
+### 7.3 节点规模上限建议
+
+| 节点数 | 建议 |
+|--------|------|
+| < 3 | 禁用 weighted balancing，保留 adaptive health tracking |
+| 3~20 | 核心场景，完整功能 |
+| 20~50 | 探活并发需要上限控制，建议 max(3, ceil(N/5)) |
+| > 50 | 给出警告，建议按地区/用途拆分为多个 group |
+
+### 7.4 TCP vs UDP/QUIC 隔离
 
 ```csharp
 // 调度时强制按协议过滤，TCP 和 UDP 分数互不影响
@@ -865,127 +1008,156 @@ Phase 1 优先完成 TCP 池；UDP/QUIC 池在 Phase 2 跟进。
 
 ## 8. 关键代码骨架
 
-### 8.1 依赖注入注册
+### 8.1 编排器注册
+
+实际实现中不使用 DI，而用 `AdaptiveSchedulerManager` 单例编排所有子模块：
 
 ```csharp
-// Program.cs / DI 注册
-services.AddSingleton<ScoreCalculator>();
-services.AddSingleton<CooldownFsm>();
-services.AddSingleton<FailureCollector>();
-services.AddSingleton<BootstrapProber>();
-services.AddSingleton<TtfbProber>(sp =>
-    new TtfbProber(tag => sp.GetRequiredService<PortRegistry>().GetPort(tag)));
-services.AddSingleton<XrayStatsPoller>();
-services.AddSingleton<AdaptiveDispatcher>();
+// AdaptiveSchedulerManager.Instance 持有所有子模块
+// → ScoreCalculator (new)
+// → CooldownFsm (new)
+// → FailureCollector (new, 含 scorer + cooldown)
+// → BootstrapProber (new)
+// → ProbeService (new, 含 port resolver + collector)
+// → ScoreLogger (new, 含 node list + log action)
+// → ActiveSetManager (new, 含 node list)
+// → IAdaptivePolicyApplier (外部传入, ReloadPolicyApplier)
 ```
 
-### 8.2 连接代理使用示例
+### 8.2 调度逻辑（active-set uniform random，由 xray balancer 执行）
+
+C# 侧不执行调度。调度由 xray `random` balancer 完成：
+- active-set 内的节点在 selector 中各出现一次
+- xray random strategy 均匀选择（去重后的 candidates）
+- C# 控制面的职责是管理 active set（进出、cooldown、hysteresis），不是管理权重
+
+```
+C# GenAdaptiveConfig:
+  tag_repeat = max(1, round(score / 25))  // score 100 → 4 副本
+
+xray config:
+  "balancer": { "strategy": "random", "selector": [A, A, A, B] }
+  → xray random 等概率选出 → P(A) = 75%, P(B) = 25%
+```
+
+ActiveConnections 死代码已清理（该设计被替换后无调用者）。
+
+### 8.3 可观测性：分数快照日志（JSONL）
 
 ```csharp
-public class ProxyConnectionHandler {
-    private readonly AdaptiveDispatcher _dispatcher;
-    private readonly IReadOnlyList<NodeState> _allNodes;
+// 每 30s 输出一次节点分数快照，存入独立 adaptive.log，JSONL 格式
+// 事件类型: score_snapshot, cooldown_enter, active_set_change, xray_reload
+// 格式要求: 每行一个 JSON 对象，支持 jq 解析和事件回放
 
-    public async Task HandleAsync(Stream clientStream) {
-        var node = _dispatcher.Select(ProxyProtocol.Tcp);
-        node.IncrementActive();
+{"time":"2026-05-21T14:30:00Z","type":"score_snapshot","node":"HK-A","score":87.3,"latencyMs":95,"lossRate":0.01,"cooldown":false}
+{"time":"2026-05-21T14:30:05Z","type":"cooldown_enter","node":"US-B","score":12.4,"latencyMs":1820,"lossRate":0.42,"consecutiveFails":3}
+{"time":"2026-05-21T14:35:00Z","type":"active_set_change","active":["HK-A","JP-C"],"explorer":["SG-D"],"cooldown":["US-B"]}
+{"time":"2026-05-21T14:35:02Z","type":"xray_reload","trigger":"active_set_change","debounceMs":12000,"durationMs":1840}
+```
 
-        bool success = false;
-        FailureType failType = FailureType.None;
+日志文件独立于 xray 日志，推荐路径 `{v2rayN}/adaptive.log`。
+主界面需提供"查看 Adaptive 日志"入口（至少打开文件）。
 
-        try {
-            // 实际连接逻辑（通过 xray SOCKS5 路由）
-            await ProxyThroughNode(node, clientStream);
-            success = true;
-        }
-        catch (TimeoutException) { failType = FailureType.Timeout; }
-        catch (SocketException)  { failType = FailureType.NetworkError; }
-        finally {
-            node.DecrementActive();
-            await _dispatcher.OnConnectionCompletedAsync(
-                node, success, failType, _allNodes);
-        }
-    }
+### 8.4 Emergency Feature Flag（紧急旁路）
+
+任何足够复杂的功能都需要一键回退路径。出问题时用户不应需要进入多层设置：
+
+```csharp
+// 全局紧急旁路，不需要重启软件
+public void EmergencyDisableAdaptive()
+{
+    _config.AdaptiveSchedulerItem.Enabled = false;
+    _probeCts?.Cancel();       // 立即停止所有探活任务
+    _scoreLogger?.Stop();      // 停止日志
+    _ = _policyApplier.RestoreDefaultConfigAsync();  // 恢复 xray 默认配置
+    _isRunning = false;
+    // Log: "Adaptive scheduling emergency-disabled by user."
 }
 ```
 
-### 8.3 可观测性：分数快照日志
-
-```csharp
-// 每 30s 输出一次节点分数快照，便于调试和验收
-public class ScoreLogger {
-    private readonly IReadOnlyList<NodeState> _nodes;
-    private readonly ILogger _logger;
-
-    public async Task StartAsync(CancellationToken ct) {
-        while (!ct.IsCancellationRequested) {
-            await Task.Delay(30_000, ct);
-            var snapshots = _nodes
-                .Select(n => n.Snapshot())
-                .OrderByDescending(s => s.Score);
-            foreach (var s in snapshots) {
-                _logger.LogInformation(
-                    "Node {Tag}: score={Score:F1} lat={LatencyMs:F0}ms " +
-                    "loss={LossRate:P1} cooldown={InCooldown}",
-                    s.Tag, s.Score, s.LatencyMs, s.LossRate, s.InCooldown);
-            }
-        }
-    }
-}
-```
+UI 要求：主界面或系统托盘菜单提供"关闭 Adaptive（紧急）"选项，一键执行。
 
 ---
 
-## 9. Phase 落地计划
+## 9. 行动计划（v3.0，基于 2026-05-21 综合评审）
 
-### Phase 1：核心调度（2~3 周，先上线）
+> 上一版 Phase 计划已过时。以下是根据实现审计 + OpenAI 同行评审修订后的完整行动计划。
 
-**目标**：替换 v2rayN 默认轮询/ping 选节点，达到"明显比默认行为更聪明"。
+### P0 — 立即执行（1~3 天，阻断上线的问题）
 
-| 模块 | 说明 |
-|------|------|
-| `NodeState`（私有锁版） | 核心数据结构 |
-| `ScoreCalculator` | 评分公式 |
-| `BootstrapProber` | 启动 TCP 探活 |
-| `CooldownFsm`（含全局约束） | 冷却状态机 |
-| `FailureCollector` | 被动失败记录 |
-| `AdaptiveDispatcher` | weighted random 调度 |
-| `ScoreLogger` | 30s 快照日志 |
+| # | 任务 | 具体内容 | 验收条件 |
+|---|------|---------|---------|
+| ~~0.1~~ | **验证 xray tag duplication 行为** ✅ 已完成 | 集成测试：`[A×3, B×1]` selector，N=1000 请求，xray v26.3.27。**结论：selector 去重，duplication 无效，A=51.1%≈50%**。系统重定位为 Active-Set Scheduler | 测试保留为 xray selector 行为契约检测器 |
+| 0.2 | **FailureType 差异化惩罚** | TlsError 不惩罚 EWMA；Refused 强惩罚(loss=1.0)；Timeout(loss=0.8)；NetworkError(loss=0.7)；UnexpectedEof(loss=0.4) | unit test 覆盖每种 FailureType 的 EWMA 更新行为 |
+| 0.3 | **Bootstrap 覆盖历史分数验证** | 代码审查 + unit test：历史高分 90 → Bootstrap TCP connect 失败 → 分数降至 1.0 | unit test 通过；文档明确"Bootstrap 始终覆盖历史" |
+| 0.4 | **Active Set Hysteresis** | Entry=60, Exit=35；在 ActiveSetManager 中实现迟滞逻辑 | unit test：score 在 45~55 抖动时，active set 不频繁变化 |
+| 0.5 | **Adaptive Feature Flag 紧急旁路** | `EmergencyDisableAdaptive()`；UI 一键可达 | 功能可用；关闭后 xray 恢复默认配置 |
 
-**验收标准**
+### P1 — 近期执行（3~7 天，功能完整性）
 
-- 死节点在 2 次连续失败后自动停用
-- 好节点选中概率 > 差节点 × 2 倍（可从日志验证分数分布）
-- 重启后 3s 内完成 Bootstrap，不影响用户使用
-- 节点全部 cooldown 时系统不崩溃（兜底路径生效）
+| # | 任务 | 具体内容 | 验收条件 |
+|---|------|---------|---------|
+| 1.1 | **debounce 从 30s 降至 10~15s** | 修改 `ReloadPolicyApplier`；实测 xray 重启耗时并写入文档 | 调度响应延迟上界降至 ~20s |
+| 1.2 | **ScoreLogger → adaptive.log（JSONL）** | 独立日志文件；JSONL 格式含 score_snapshot、cooldown、active_set_change、xray_reload | 日志可直接用 jq 解析；主界面有打开入口 |
+| 1.3 | **ActiveSetManager top-K 逻辑文档化** | K 计算公式、explorer 比例、explorer 选取策略写入设计文档 | 代码注释与文档一致 |
+| 1.4 | **AdaptiveSchedulerManager 生命周期** | 移除/封装静态单例；文档化 profile 切换处理流程；确认 `IAsyncDisposable` | 切换 group 时探活任务正确重启，无资源泄漏 |
+| 1.5 | **xray 版本兼容性检查** | 启动时验证版本，不满足最低验证版本时禁用 adaptive 并告警 | 低版本 xray 时功能自动降级 |
+| 1.6 | **ProbeUrl 暴露到 Settings UI** | 输入框读写 `AdaptiveSchedulerItem.ProbeUrl`，修改后重启 ProbeService | 用户可配置 ProbeUrl |
+| 1.7 | **分数过期机制** | 历史分数超过 4h 强制回退到 50 | unit test：加载 5h 前历史分数，验证被重置 |
 
-### Phase 2：被动测量增强（Phase 1 稳定后）
+### P2 — 中期执行（1~2 周，稳固性）
 
-| 模块 | 说明 |
-|------|------|
-| `TtfbProber`（HttpClient 复用版） | 精确 TTFB 观测 |
-| `XrayStatsPoller` | 吞吐率异常检测 |
-| Cooldown 恢复探活 | 到期前 5s 主动验证 |
-| UDP/QUIC 独立节点池 | TCP/UDP 分离 |
+| # | 任务 | 具体内容 | 验收条件 |
+|---|------|---------|---------|
+| 2.1 | **XrayStatsPoller** | 5s 轮询 `/debug/vars`；高分低吞吐（< 1KB/s）触发补探活 | 高分节点吞吐归零后 10s 内触发探活 |
+| 2.2 | **边界情况：1/2 节点处理** | 1 节点禁用 weighted balancing；2 节点允许最多 1 个 cooldown | unit test 覆盖 1、2、3 节点场景 |
+| 2.3 | **PerTagProxyTraffic 线程安全** | 改为 `ConcurrentDictionary<string, NodeTrafficSnapshot>`（record） | 无数据竞争；类型可序列化 |
+| 2.4 | **ProbeService 并发上限 + 压力测试** | 探活并发上限 max(3, ceil(N/5))；50 节点场景压力测试 | 资源占用有文档上界 |
+| 2.5 | **Replayable Telemetry 完整事件** | JSONL 事件包含 probe_result、ewma_update、xray_reload 等完整链路 | 能从日志重现任意时间段的调度决策链 |
+| 2.6 | **探活多目标支持** | 支持配置多个 ProbeUrl；结果取平均 | 配置 2 个探活目标时，两者都超时才判定失败 |
 
-**验收标准**
+### P3 — 长期执行（仅在真实用户场景证明必要时启动）
 
-- 节点质量变化后 5 分钟内分数调整到位
-- 吞吐率异常节点被检测并触发重探
-- 无 socket exhaustion 告警
-
-### Phase 3：可观测性与持久化
-
-| 模块 | 说明 |
-|------|------|
-| v2rayN UI 分数面板 | 实时显示各节点分数 |
-| 分数持久化 | 重启后恢复上次分数，不强制冷启动 |
-| QUIC 连接健康检查 | 30s 周期 HEAD 探测 |
-| 调度决策审计日志 | 每次选节点记录候选集快照 |
+| # | 任务 | 说明 |
+|---|------|------|
+| 3.1 | RuntimePolicyApplier | 通过 xray runtime API 实现零中断切换，替代 ReloadPolicyApplier（依赖 xray API 支持） |
+| 3.2 | 调度质量指标（熵、P95 延迟） | 每 5 分钟计算并写入日志，作为观测指标（不作为验收标准） |
+| 3.3 | UDP/QUIC 独立节点池 | 依赖 RuntimePolicyApplier 完成后实现 |
+| 3.4 | 调度决策审计日志 UI | Telemetry 查看器，内嵌到 v2rayN 设置页 |
+| 3.5 | 节点规模上限警告 | > 50 节点时提示拆组 |
+| 3.6 | 外部 balancer / true weighted routing | **当前禁止在 P1/P2 阶段实施。** 仅在真实用户反馈证明 active-set uniform random 不足以满足需求时，重新评估此需求。启动前必须在 xray 源码级验证 selector 行为 |
 
 ---
 
-## 10. 关键决策备忘
+## 10. 验收标准
+
+### 10.1 核心调度行为（必须全部通过才能上线）
+
+| 测试场景 | 预期行为 | 验证方法 |
+|---------|---------|---------|
+| 全部节点 cooldown | 选 cooldown 剩余最短节点，不崩溃 | unit test |
+| 节点连续 2 次失败 | 进入 cooldown，其他节点接管 | unit test |
+| cooldown 节点数达到 1/3 | 第 1/3+1 个失败节点降权而非 cooldown | unit test |
+| Bootstrap 发现死节点 | Score=1.0，不自动进 cooldown | unit test |
+| 历史分数 90 + Bootstrap 失败 | 分数覆盖为 1.0（Bootstrap 始终覆盖历史） | unit test |
+| TlsError 失败 | EWMA 不更新，触发独立告警 | unit test |
+| xray selector 去重行为 | `[A×3, B×1]` selector，1000 请求 A≈50%（证实去重） | integration test（CI 可重复，作为行为契约检测器） |
+| active-set 内均匀分配 | active-set 内各节点流量接近均匀 | integration test |
+| score 在 45~55 抖动 | active set 不频繁变化（hysteresis 生效） | unit test |
+| 紧急旁路触发 | xray 恢复默认配置，adaptive 停止，不崩溃 | integration test |
+
+### 10.2 用户体验指标（可量化，观测用，不作为阻断条件）
+
+| 指标 | 目标值 | 测量方法 |
+|------|--------|---------|
+| 节点质量变化响应时间 | ≤ 25s（含 debounce 15s + xray 重启 ~1.1s，实测） | 实测：人为降低节点质量，观察切换时间 |
+| 好节点 vs 差节点选中概率比 | ≥ 3:1（score 差 50 分时） | 从 adaptive.log 计算 |
+| 冷启动后首次请求成功率 | ≥ 95%（Bootstrap 完成后） | 实测：重启 10 次，记录首次请求结果 |
+| active set reload 频率 | < 4 次/小时（正常网络环境） | 从 adaptive.log 统计 xray_reload 事件 |
+
+---
+
+## 11. 关键决策备忘
 
 | 决策点 | 选择 | 理由 |
 |--------|------|------|
@@ -1002,22 +1174,34 @@ public class ScoreLogger {
 | 吞吐率 | 辅助指标，不入主公式 | 主要用于异常检测，避免 xray stats 分辨率不足带来的噪声 |
 | 兜底策略 | 选 cooldown 最短节点 | 总好过返回错误；用户可手动刷新重试 |
 | 系统复杂度 | 轻量 adaptive routing | v2rayN 定位决定必须"轻"；核心数学不能省，UI 复杂度可以省 |
+| FailureType 惩罚 | 按类型差异化 (TlsError=0,Refused=1.0,Timeout=0.8) | 不同错误根因不同，统一惩罚导致 EWMA 失真 (P0 fix) |
+| Active Set 迟滞 | Entry=60, Exit=35, 缓冲带 25 分 | 防 score 震荡导致频繁 reload (P0 fix, OpenAI 新增) |
+| Bootstrap 覆盖策略 | 始终覆盖历史分数（包括高分） | 历史高分可能来自已死亡节点，Bootstrap 是当前真实状态 |
+| 分数过期 | 历史分数超过 4h 回退到 50 | 长时间关机后历史分数无效，不信任过期数据 |
+| 探活多目标 | 建议支持多个 ProbeUrl，取平均值 | 减少单一目标（如 `cp.cloudflare.com`）的偶发抖动影响 EWMA |
+| Emergency Feature Flag | 一键关闭 adaptive + 恢复默认配置 | 任何复杂功能都需要快速回退路径 |
+| xray 版本依赖 | tag duplication 行为需最低版本号 | 上游去重会静默破坏调度，必须版本检查 + CI 集成测试 |
+| ScoreLogger 格式 | JSONL，独立文件，可回放 | 出问题时能重现调度决策链 (OpenAI 建议) |
+| 节点规模上限 | <3 禁用 adaptive active-set (uniform random 无意义); >50 警告拆组 | 小节点数不值得调度，大节点数探活压力不可控 |
+| xray tag duplication 弃用 | 2026-05-21 集成测试证实 xray v26.3.27 对 selector 去重，duplication 无效 | 整个 weighted scheduling 假设不成立；系统重定位为 Active-Set Scheduler |
+| Active-Set vs Weighted | 当前版本 = active-set + cooldown + hysteresis + uniform random；不是 weighted LB | 核心目标"动态剔除坏节点"而非"精确概率分流" |
+| **禁止 weighted routing hack** | 任何新的加权方案必须在 xray 源码级验证 selector 行为后才能进入设计 | tag duplication 已被证伪；Phase 1/2 坚持 active-set uniform random |
 
 ---
 
-## 11. 实时节点速度显示（Real-time Node Speed Display）
+## 12. 实时节点速度显示（Real-time Node Speed Display）
 
 **方案设计：Claude** | 日期：2026-05-21
 
-### 11.1 问题
+### 12.1 问题
 
 主界面表格的 Speed 列只在手动测速时才更新。Adaptive 负载均衡运行时，右下角状态栏有总速度，但无法知道每个节点当前的实际吞吐量。
 
-### 11.2 实现方案
+### 12.2 实现方案
 
 不改表结构、不新增列、不新增事件。利用已有的统计管线数据直接写到现有 Speed 列的显示属性。
 
-### 11.3 数据流
+### 12.3 数据流
 
 ```
 xray /debug/vars (1s 轮询)
@@ -1031,7 +1215,7 @@ xray /debug/vars (1s 轮询)
     → 设置 item.SpeedVal = format(ProxyUp + ProxyDown)   ← 新增
 ```
 
-### 11.4 改动的文件
+### 12.4 改动的文件
 
 | 文件 | 改动量 |
 |------|--------|
@@ -1051,7 +1235,7 @@ if (AdaptiveSchedulerManager.Instance.IsRunning)
 }
 ```
 
-### 11.5 设计决策
+### 12.5 设计决策
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
