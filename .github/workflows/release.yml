@@ -1,0 +1,157 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Architecture'
+        required: true
+        type: choice
+        options: [x64, arm64]
+        default: x64
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Restore
+      run: dotnet restore v2rayN/v2rayN.sln
+
+    - name: Publish (${{ matrix.arch }})
+      run: |
+        $rid = if ('${{ matrix.arch }}' -eq 'arm64') { 'win-arm64' } else { 'win-x64' }
+        dotnet publish v2rayN/v2rayN/v2rayN.csproj `
+          -c Release `
+          -r $rid `
+          -p:PublishSingleFile=false `
+          -p:SelfContained=true
+
+    - name: Download core binaries
+      run: |
+        $arch = '${{ matrix.arch }}'
+        $binLabel = if ($arch -eq 'arm64') { 'arm64' } else { '64' }
+        $rid = if ($arch -eq 'arm64') { 'win-arm64' } else { 'win-x64' }
+        $publishDir = "v2rayN/v2rayN/bin/Release/net10.0-windows10.0.19041.0/$rid/publish"
+        $binDir = "$publishDir/bin"
+
+        # Try bundle first
+        $coreUrl = "https://github.com/2dust/v2rayN-core-bin/raw/refs/heads/master/v2rayN-windows-$binLabel.zip"
+        try {
+          Invoke-WebRequest -Uri $coreUrl -OutFile core.zip -UseBasicParsing
+          Expand-Archive -Path core.zip -DestinationPath core_extract -Force
+          $nested = Get-ChildItem core_extract -Directory | Select-Object -First 1
+          if ($nested) {
+            $srcBin = Join-Path $nested.FullName "bin"
+            if (Test-Path $srcBin) {
+              Copy-Item -Path "$srcBin\*" -Destination $binDir -Recurse -Force
+            } else {
+              Copy-Item -Path "$($nested.FullName)\*" -Destination $binDir -Recurse -Force
+            }
+          }
+          Write-Host "Core bundle OK"
+        } catch {
+          Write-Host "Bundle failed, downloading individually..."
+          # Xray
+          $xrayVer = (Invoke-RestMethod -Uri "https://api.github.com/repos/XTLS/Xray-core/releases/latest").tag_name.TrimStart('v')
+          $xrayUrl = if ($arch -eq 'arm64') {
+            "https://github.com/XTLS/Xray-core/releases/download/v$xrayVer/Xray-windows-arm64-v8a.zip"
+          } else {
+            "https://github.com/XTLS/Xray-core/releases/download/v$xrayVer/Xray-windows-64.zip"
+          }
+          Invoke-WebRequest -Uri $xrayUrl -OutFile xray.zip
+          Expand-Archive xray.zip xray_tmp -Force
+          $x = Get-ChildItem xray_tmp -Recurse -Filter "xray.exe" | Select-Object -First 1
+          if ($x) { New-Item -ItemType Directory -Force "$binDir/xray" | Out-Null; Copy-Item $x.FullName "$binDir/xray" -Force }
+          # sing-box
+          $singVer = (Invoke-RestMethod -Uri "https://api.github.com/repos/SagerNet/sing-box/releases/latest").tag_name.TrimStart('v')
+          $singUrl = if ($arch -eq 'arm64') {
+            "https://github.com/SagerNet/sing-box/releases/download/v$singVer/sing-box-$singVer-windows-arm64.zip"
+          } else {
+            "https://github.com/SagerNet/sing-box/releases/download/v$singVer/sing-box-$singVer-windows-amd64.zip"
+          }
+          Invoke-WebRequest -Uri $singUrl -OutFile sing.zip
+          Expand-Archive sing.zip sing_tmp -Force
+          $s = Get-ChildItem sing_tmp -Recurse -Filter "sing-box.exe" | Select-Object -First 1
+          if ($s) { New-Item -ItemType Directory -Force "$binDir/sing_box" | Out-Null; Copy-Item $s.FullName "$binDir/sing_box" -Force }
+        }
+
+        # Remove bundled mihomo
+        if (Test-Path "$binDir/mihomo") { Remove-Item "$binDir/mihomo" -Recurse -Force }
+
+    - name: Download geo assets
+      run: |
+        $publishDir = "v2rayN/v2rayN/bin/Release/net10.0-windows10.0.19041.0/${{ matrix.arch == 'arm64' && 'win-arm64' || 'win-x64' }}/publish"
+        $binDir = "$publishDir/bin"
+        $srssDir = "$binDir/srss"
+        New-Item -ItemType Directory -Force $srssDir | Out-Null
+
+        $geoAssets = @(
+          @{Url="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat";              Dest="$binDir\geosite.dat"},
+          @{Url="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat";                Dest="$binDir\geoip.dat"},
+          @{Url="https://raw.githubusercontent.com/Loyalsoldier/geoip/release/geoip-only-cn-private.dat";            Dest="$binDir\geoip-only-cn-private.dat"},
+          @{Url="https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb";                         Dest="$binDir\Country.mmdb"},
+          @{Url="https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.metadb";                 Dest="$binDir\geoip.metadb"}
+        )
+        foreach ($a in $geoAssets) {
+          try { Invoke-WebRequest -Uri $a.Url -OutFile $a.Dest -UseBasicParsing } catch { Write-Host "WARN: $($a.Dest)" }
+        }
+
+        $srs = @("geoip-private","geoip-cn","geoip-facebook","geoip-fastly","geoip-google","geoip-netflix","geoip-telegram","geoip-twitter")
+        foreach ($n in $srs) {
+          try { Invoke-WebRequest -Uri "https://raw.githubusercontent.com/2dust/sing-box-rules/refs/heads/rule-set-geoip/$n.srs" -OutFile "$srssDir\$n.srs" -UseBasicParsing } catch {}
+        }
+        $srsGeosite = @("geosite-cn","geosite-gfw","geosite-google","geosite-greatfire","geosite-geolocation-cn","geosite-category-ads-all","geosite-private")
+        foreach ($n in $srsGeosite) {
+          try { Invoke-WebRequest -Uri "https://raw.githubusercontent.com/2dust/sing-box-rules/refs/heads/rule-set-geosite/$n.srs" -OutFile "$srssDir\$n.srs" -UseBasicParsing } catch {}
+        }
+
+    - name: Package zip
+      run: |
+        $arch = '${{ matrix.arch }}'
+        $rid = if ($arch -eq 'arm64') { 'win-arm64' } else { 'win-x64' }
+        $binLabel = if ($arch -eq 'arm64') { 'arm64' } else { '64' }
+        $publishDir = "v2rayN/v2rayN/bin/Release/net10.0-windows10.0.19041.0/$rid/publish"
+        $zipName = "v2rayN-windows-$binLabel.zip"
+
+        Compress-Archive -Path "$publishDir\*" -DestinationPath $zipName -CompressionLevel Optimal
+        Write-Host "Created $zipName"
+
+        echo "zipName=$zipName" >> $env:GITHUB_ENV
+        echo "binLabel=$binLabel" >> $env:GITHUB_ENV
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: v2rayN-windows-${{ matrix.arch }}
+        path: v2rayN-windows-*.zip
+        retention-days: 7
+
+    - name: Attach to Release (tag push only)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: v2rayN-windows-*.zip
