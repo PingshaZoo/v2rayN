@@ -1479,6 +1479,106 @@
                     </Grid>
                 </ScrollViewer>
             </TabItem>
+
+            <TabItem Header="{x:Static resx:ResUI.TbSettingsAdaptive}">
+                <ScrollViewer VerticalScrollBarVisibility="Visible">
+                    <Grid Margin="{StaticResource Margin8}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock
+                            Grid.Row="0"
+                            Grid.Column="0"
+                            Margin="{StaticResource Margin8}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="{x:Static resx:ResUI.TbSettingsAdaptiveEnabled}" />
+                        <ToggleButton
+                            x:Name="togAdaptiveEnabled"
+                            Grid.Row="0"
+                            Grid.Column="1"
+                            Margin="{StaticResource Margin8}"
+                            HorizontalAlignment="Left" />
+                        <TextBlock
+                            Grid.Row="0"
+                            Grid.Column="2"
+                            Margin="{StaticResource Margin4}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="{x:Static resx:ResUI.TbSettingsAdaptiveEnabledTip}"
+                            TextWrapping="Wrap" />
+
+                        <TextBlock
+                            Grid.Row="1"
+                            Grid.Column="0"
+                            Margin="{StaticResource Margin8}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="{x:Static resx:ResUI.TbSettingsAdaptiveProbeUrl}" />
+                        <TextBox
+                            x:Name="txtAdaptiveProbeUrl"
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            Width="400"
+                            Height="60"
+                            Margin="{StaticResource Margin8}"
+                            AcceptsReturn="True"
+                            Style="{StaticResource DefTextBox}"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Grid.Row="1"
+                            Grid.Column="2"
+                            Margin="{StaticResource Margin4}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="{x:Static resx:ResUI.TbSettingsAdaptiveProbeUrlTip}"
+                            TextWrapping="Wrap" />
+
+                        <TextBlock
+                            Grid.Row="2"
+                            Grid.Column="0"
+                            Margin="{StaticResource Margin8}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="{x:Static resx:ResUI.TbSettingsAdaptiveProbeIntervalSec}" />
+                        <TextBox
+                            x:Name="txtAdaptiveProbeIntervalSec"
+                            Grid.Row="2"
+                            Grid.Column="1"
+                            Width="100"
+                            Margin="{StaticResource Margin8}"
+                            Style="{StaticResource DefTextBox}" />
+
+                        <TextBlock
+                            Grid.Row="3"
+                            Grid.Column="0"
+                            Margin="{StaticResource Margin8}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="{x:Static resx:ResUI.TbSettingsAdaptiveProbeTimeoutMs}" />
+                        <TextBox
+                            x:Name="txtAdaptiveProbeTimeoutMs"
+                            Grid.Row="3"
+                            Grid.Column="1"
+                            Width="100"
+                            Margin="{StaticResource Margin8}"
+                            Style="{StaticResource DefTextBox}" />
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
         </TabControl>
     </DockPanel>
 </base:WindowBase>

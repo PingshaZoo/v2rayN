@@ -311,4 +311,11 @@ public class AdaptiveSchedulerItem
     public string ProbeUrl { get; set; } = "http://cp.cloudflare.com/";
     public int ProbeIntervalSec { get; set; } = 30;
     public int ProbeTimeoutMs { get; set; } = 5000;
+
+    /// <summary>
+    /// P1#7: Fraction of probes that use GET (heavy probe) instead of HEAD,
+    /// to defeat airport small-packet acceleration (§6.4). Range [0.0, 1.0].
+    /// Default 0.2 = 20% of probes are heavy. Set to 0 to disable.
+    /// </summary>
+    public double ProbeHeavyFraction { get; set; } = 0.2;
 }

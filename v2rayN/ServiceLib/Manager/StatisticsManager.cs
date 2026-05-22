@@ -132,10 +132,13 @@ public class StatisticsManager
             var tagToIndexId = AdaptiveSchedulerManager.Instance.TagToIndexId;
             if (tagToIndexId is { Count: > 0 })
             {
-                foreach (var (tag, (up, down)) in server.PerTagProxyTraffic)
+                foreach (var (tag, traffic) in server.PerTagProxyTraffic)
                 {
                     if (!tagToIndexId.TryGetValue(tag, out var childIndexId))
                         continue;
+
+                    long up = traffic.UpKbps;
+                    long down = traffic.DownKbps;
 
                     var childStat = await GetOrCreateStatItem(childIndexId);
                     childStat.TodayUp += up;

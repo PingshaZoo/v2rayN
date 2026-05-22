@@ -138,6 +138,15 @@ public class OptionSettingViewModel : MyReactiveObject
 
     #endregion Cloudflare Best IP
 
+    #region Adaptive Node Scheduler
+
+    [Reactive] public bool AdaptiveEnabled { get; set; }
+    [Reactive] public string AdaptiveProbeUrl { get; set; }
+    [Reactive] public int AdaptiveProbeIntervalSec { get; set; }
+    [Reactive] public int AdaptiveProbeTimeoutMs { get; set; }
+
+    #endregion Adaptive Node Scheduler
+
     public ReactiveCommand<Unit, Unit> SaveCmd { get; }
 
     public OptionSettingViewModel(Func<EViewAction, object?, Task<bool>>? updateView)
@@ -206,6 +215,13 @@ public class OptionSettingViewModel : MyReactiveObject
         CfWeightLoss = cf.WeightLoss;
         CfUuid = cf.Uuid ?? string.Empty;
         CfWsPath = cf.WsPath ?? "/";
+
+        // Adaptive Node Scheduler
+        var adaptive = _config.AdaptiveSchedulerItem ?? new();
+        AdaptiveEnabled = adaptive.Enabled;
+        AdaptiveProbeUrl = adaptive.ProbeUrl ?? "http://cp.cloudflare.com/";
+        AdaptiveProbeIntervalSec = adaptive.ProbeIntervalSec > 0 ? adaptive.ProbeIntervalSec : 30;
+        AdaptiveProbeTimeoutMs = adaptive.ProbeTimeoutMs > 0 ? adaptive.ProbeTimeoutMs : 5000;
 
         #endregion Core
 
@@ -416,6 +432,12 @@ public class OptionSettingViewModel : MyReactiveObject
         _config.CfBestIpItem.WeightLoss = CfWeightLoss;
         _config.CfBestIpItem.Uuid = CfUuid.TrimEx();
         _config.CfBestIpItem.WsPath = CfWsPath.TrimEx();
+
+        _config.AdaptiveSchedulerItem ??= new();
+        _config.AdaptiveSchedulerItem.Enabled = AdaptiveEnabled;
+        _config.AdaptiveSchedulerItem.ProbeUrl = AdaptiveProbeUrl.TrimEx();
+        _config.AdaptiveSchedulerItem.ProbeIntervalSec = Math.Max(5, AdaptiveProbeIntervalSec);
+        _config.AdaptiveSchedulerItem.ProbeTimeoutMs = Math.Max(500, AdaptiveProbeTimeoutMs);
 
         _config.GuiItem.AutoRun = AutoRun;
         _config.GuiItem.EnableStatistics = EnableStatistics;

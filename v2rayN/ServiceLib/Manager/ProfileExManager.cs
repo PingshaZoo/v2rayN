@@ -157,6 +157,7 @@ public class ProfileExManager
         profileEx.AdaptiveLatency = latency;
         profileEx.AdaptiveCooldown = cooldown ? 1 : 0;
         profileEx.AdaptiveActive = active ? 1 : 0;
+        profileEx.AdaptiveLastObserved = DateTime.UtcNow;
         IndexIdEnqueue(indexId);
     }
 

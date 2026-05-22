@@ -158,6 +158,12 @@ public partial class OptionSettingWindow
             this.Bind(ViewModel, vm => vm.CfUuid, v => v.txtCfUuid.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.CfWsPath, v => v.txtCfWsPath.Text).DisposeWith(disposables);
 
+            // Adaptive Node Scheduler bindings
+            this.Bind(ViewModel, vm => vm.AdaptiveEnabled, v => v.togAdaptiveEnabled.IsChecked).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveProbeUrl, v => v.txtAdaptiveProbeUrl.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveProbeIntervalSec, v => v.txtAdaptiveProbeIntervalSec.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveProbeTimeoutMs, v => v.txtAdaptiveProbeTimeoutMs.Text).DisposeWith(disposables);
+
             this.BindCommand(ViewModel, vm => vm.SaveCmd, v => v.btnSave).DisposeWith(disposables);
         });
         WindowsUtils.SetDarkBorder(this, AppManager.Instance.Config.UiItem.CurrentTheme);

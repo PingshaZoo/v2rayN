@@ -1,5 +1,14 @@
 namespace ServiceLib.Handler.AdaptiveNodeScheduler;
 
+/// <summary>
+/// Computes HealthScore from two signals: EWMA latency and EWMA loss rate.
+///
+/// <b>CRITICAL (§6.6): Throughput is NOT a valid node-quality signal.</b>
+/// Throughput suffers from causality inversion (user behavior → throughput,
+/// not node quality → throughput). It is PROHIBITED from entering this formula.
+/// See <see cref="XrayStatsPoller"/> for the only permitted throughput usage
+/// (composite anomaly detection + telemetry).
+/// </summary>
 public sealed class ScoreCalculator
 {
     private const double LatencyRef = 2000.0;

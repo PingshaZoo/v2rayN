@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace ServiceLib.Models.Dto;
 
 [Serializable]
@@ -12,11 +14,11 @@ public class ServerSpeedItem : ServerStatItem
     public long DirectDown { get; set; }
 
     /// <summary>
-    /// Per-outbound-tag proxy traffic deltas (KB).
-    /// Key is the xray outbound tag, value is a tuple of (up, down) in KB per second.
+    /// P2.3: Per-outbound-tag proxy traffic deltas (KB).
+    /// Thread-safe via ConcurrentDictionary; value is a record for atomic reads.
     /// Populated by StatisticsXrayService when adaptive scheduling is active.
     /// </summary>
-    public Dictionary<string, (long Up, long Down)>? PerTagProxyTraffic { get; set; }
+    public ConcurrentDictionary<string, NodeTrafficSnapshot>? PerTagProxyTraffic { get; set; }
 }
 
 [Serializable]

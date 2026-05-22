@@ -1,12 +1,24 @@
 namespace ServiceLib.Handler.AdaptiveNodeScheduler;
 
 /// <summary>
-/// Manages the active set — which nodes are eligible for traffic.
+/// Manages the active set — which nodes are eligible for production traffic.
 /// Uses hysteresis (Entry=60, Exit=35) to prevent score oscillation from
 /// causing frequent active-set changes and xray reloads.
 ///
-/// When the active set changes (node enters/exits cooldown, or score ranking shifts),
-/// fires an event so the manager can regenerate the xray balancer config.
+/// <h2>Stability Objective (§3.4)</h2>
+/// All decisions serve one goal: <b>minimize active-set churn while maximizing
+/// healthy-node exposure</b>. Priority: Stability > Responsiveness > Optimality.
+///
+/// <h2>Explorer isolation</h2>
+/// Explorer nodes receive probe traffic only — they do NOT enter the production
+/// xray balancer selector. An explorer must earn its way into the sticky set by
+/// crossing Entry=60 through sustained probe quality. This prevents experimental
+/// traffic from mixing into production.
+///
+/// <h2>Decision traceability</h2>
+/// When the sticky top-K set changes, <see cref="LastChange"/> records which nodes
+/// were added/removed so the scheduler can log a causal trace in the
+/// <c>active_set_change</c> JSONL event.
 /// </summary>
 public sealed class ActiveSetManager
 {
@@ -20,6 +32,11 @@ public sealed class ActiveSetManager
     private HashSet<string> _lastTopKSet = new(StringComparer.Ordinal);
     private HashSet<string> _currentActiveSet = new(StringComparer.Ordinal);
 
+    /// <summary>Tags added in the most recent sticky-set change, if any.</summary>
+    public IReadOnlyList<string> LastAdded { get; private set; } = Array.Empty<string>();
+    /// <summary>Tags removed in the most recent sticky-set change, if any.</summary>
+    public IReadOnlyList<string> LastRemoved { get; private set; } = Array.Empty<string>();
+
     public ActiveSetManager(IReadOnlyList<NodeState> nodes)
     {
         _nodes = nodes;
@@ -29,7 +46,10 @@ public sealed class ActiveSetManager
     /// Returns node tags that should be in the balancer selector.
     /// Uses hysteresis: nodes already in the active set stay until score &lt; ExitThreshold (35);
     /// nodes outside need score >= EntryThreshold (60) to enter.
-    /// Then selects top-K by score + optionally one random explorer.
+    /// Then selects top-K by score.
+    ///
+    /// Explorer nodes receive probe traffic only — they do NOT enter the
+    /// production selector. Explorer must cross Entry=60 to enter sticky.
     /// Cooldown nodes are always excluded.
     /// </summary>
     public List<string> GetActiveTags()
@@ -38,7 +58,18 @@ public sealed class ActiveSetManager
             .Where(n => !n.IsInCooldown)
             .ToList();
 
-        if (eligible.Count == 0) return [];
+        if (eligible.Count == 0)
+        {
+            // All nodes in cooldown — select the one with shortest remaining
+            // cooldown time. Better to route through a soon-to-recover node
+            // than to leave the balancer with an empty selector.
+            var soonest = _nodes
+                .OrderBy(n => (n.CooldownUntil - DateTime.UtcNow).TotalMilliseconds)
+                .First();
+            var tags = new List<string> { soonest.Tag };
+            lock (_lock) { _currentActiveSet = new HashSet<string>(tags, StringComparer.Ordinal); }
+            return tags;
+        }
         if (eligible.Count <= 2)
         {
             var tags = eligible.Select(n => n.Tag).ToList();
@@ -70,6 +101,9 @@ public sealed class ActiveSetManager
             }
         }
 
+        // topK = max(2, ceil(N * 2/3)) — at least 2 nodes, up to 2/3 of eligible.
+        // This is more inclusive than the old design (ceil(N * 0.5)) to keep
+        // enough nodes in the active set for meaningful uniform random distribution.
         int topK = Math.Max(2, (int)Math.Ceiling(eligible.Count * 2.0 / 3.0));
 
         var sortedSticky = sticky.OrderByDescending(n => n.Score).ToList();
@@ -86,24 +120,25 @@ public sealed class ActiveSetManager
             active.AddRange(sortedCandidates.Take(remainingSlots).Select(n => n.Tag));
         }
 
-        // Explorer: pick one unused node with score >= ExitThreshold (35)
-        // to give it exposure. The explorer gets ONE round but does NOT get
-        // sticky status — it must pass Entry=60 to enter the sticky set next time.
-        // Nodes below Exit=35 are truly dead; no point exposing them.
+        // Only top-K nodes get sticky status and enter the production selector.
+        // Explorer nodes receive probe traffic only (ProbeService probes all nodes),
+        // not production traffic. Explorer must pass Entry=60 to enter sticky.
         var topKSet = new HashSet<string>(active, StringComparer.Ordinal);
-        var usedTags = new HashSet<string>(active, StringComparer.Ordinal);
-        var explorerPool = eligible
-            .Where(n => !usedTags.Contains(n.Tag) && n.Score >= ExitThreshold)
-            .ToList();
-        if (explorerPool.Count > 0 && active.Count + 1 <= eligible.Count)
-        {
-            var explorer = explorerPool[Random.Shared.Next(explorerPool.Count)];
-            active.Add(explorer.Tag);
-        }
-
-        // Only top-K nodes (before explorer) get sticky status.
-        // Explorer is excluded so it doesn't bypass the Entry=60 gate permanently.
         lock (_lock) { _currentActiveSet = new HashSet<string>(topKSet, StringComparer.Ordinal); }
+
+        // Safety net: if hysteresis would produce an empty active set but eligible
+        // nodes exist (all scores in [35, 60) on first call), fall back to raw
+        // top-K by score. The balancer must never have an empty selector.
+        if (active.Count == 0 && eligible.Count > 0)
+        {
+            active = eligible
+                .OrderByDescending(n => n.Score)
+                .Take(topK)
+                .Select(n => n.Tag)
+                .ToList();
+            var fallbackSet = new HashSet<string>(active, StringComparer.Ordinal);
+            lock (_lock) { _currentActiveSet = fallbackSet; }
+        }
 
         return active;
     }
@@ -123,6 +158,9 @@ public sealed class ActiveSetManager
     /// Checks whether the meaningful active set (topK by score, with hysteresis)
     /// has changed since last call. Explorer rotations alone do NOT trigger a change.
     /// Returns true if a config update is needed.
+    ///
+    /// When a change is detected, <see cref="LastAdded"/> and <see cref="LastRemoved"/>
+    /// are populated so the scheduler can log a causal trace.
     /// </summary>
     public bool HasActiveSetChanged()
     {
@@ -131,7 +169,14 @@ public sealed class ActiveSetManager
             .ToList();
 
         HashSet<string> currentTopK;
-        if (eligible.Count <= 2)
+        if (eligible.Count == 0)
+        {
+            var soonest = _nodes
+                .OrderBy(n => (n.CooldownUntil - DateTime.UtcNow).TotalMilliseconds)
+                .First();
+            currentTopK = new HashSet<string>(StringComparer.Ordinal) { soonest.Tag };
+        }
+        else if (eligible.Count <= 2)
         {
             currentTopK = new HashSet<string>(
                 eligible.Select(n => n.Tag), StringComparer.Ordinal);
@@ -177,6 +222,10 @@ public sealed class ActiveSetManager
             if (_lastTopKSet.SetEquals(currentTopK))
                 return false;
 
+            // Decision traceability: record what changed so the scheduler
+            // can include a causal trace in the active_set_change JSONL event.
+            LastAdded = currentTopK.Except(_lastTopKSet).ToList();
+            LastRemoved = _lastTopKSet.Except(currentTopK).ToList();
             _lastTopKSet = currentTopK;
             return true;
         }

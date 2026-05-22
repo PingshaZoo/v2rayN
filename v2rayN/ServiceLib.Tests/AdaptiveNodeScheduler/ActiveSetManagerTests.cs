@@ -30,9 +30,9 @@ public class ActiveSetManagerTests
     }
 
     /// <summary>
-    /// Returns the active set minus one possible explorer (the sticky top-K).
-    /// Since the explorer is randomly chosen, callers use this to verify
-    /// the deterministic core of the active set.
+    /// Returns the sticky core (top-K set). Since explorer no longer enters
+    /// the production selector, this is equivalent to the full active set
+    /// minus any artifacts. Used to verify the deterministic core.
     /// </summary>
     private static HashSet<string> StickyCore(List<string> active, HashSet<string> knownTopK)
     {
@@ -50,10 +50,12 @@ public class ActiveSetManagerTests
     }
 
     [Fact]
-    public void GetActiveTags_AllBelowEntryButAboveExit_ShouldOnlyHaveExplorer()
+    public void GetActiveTags_AllBelowEntryButAboveExit_FallsBackToTopK()
     {
         // 5 nodes, all at score=55 (below Entry=60, above Exit=35).
-        // None qualify for the sticky top-K. One enters as explorer (>=35).
+        // No nodes qualify for sticky (Entry=60). No explorer in production
+        // selector. Safety net activates: fall back to raw top-K by score
+        // so the balancer is never empty.
         var nodes = new List<NodeState>
         {
             CreateNode("A", 55),
@@ -66,10 +68,9 @@ public class ActiveSetManagerTests
         var mgr = new ActiveSetManager(nodes);
         var active = mgr.GetActiveTags();
 
-        // topK = 4, but no nodes pass Entry=60 → sticky is empty
-        // Explorer pool: all 5 nodes (all >= 35)
-        active.Count.Should().Be(1,
-            "exactly one explorer enters; no nodes qualify for sticky top-K");
+        // topK = 4, safety net: top 4 by score
+        active.Count.Should().Be(4,
+            "safety net: when no nodes pass hysteresis, fall back to top-K by raw score");
     }
 
     [Fact]
@@ -89,17 +90,16 @@ public class ActiveSetManagerTests
 
         // topK = max(2, ceil(5 * 2/3)) = 4
         // Pass Entry=60: A(75), B(70), C(65) → 3 in sticky
-        // + 1 explorer from {D(50), E(45)} (both >= 35)
-        active.Count.Should().Be(4, "topK(4) = 3 sticky + 1 explorer");
+        // No explorer in production selector (§3.4 stability fix)
+        active.Count.Should().Be(3, "topK(4) = 3 sticky, no explorer in production selector");
 
         // Sticky set must contain A, B, C
         active.Should().Contain(new[] { "A", "B", "C" },
             "nodes >= 60 must enter the sticky set");
 
-        // Explorer pool verification: at most 1 from {D, E}
-        var extras = active.Where(t => t == "D" || t == "E").ToList();
-        extras.Count.Should().BeLessThanOrEqualTo(1,
-            "at most one explorer from the below-entry pool");
+        // D and E must NOT be in production selector (explorer receives probe traffic only)
+        active.Should().NotContain(new[] { "D", "E" },
+            "nodes below Entry=60 must earn their way in through sustained probe quality");
     }
 
     [Fact]
@@ -305,23 +305,32 @@ public class ActiveSetManagerTests
     }
 
     [Fact]
-    public void GetActiveTags_NoEligibleNodes_ReturnsEmpty()
+    public void GetActiveTags_AllNodesCooldown_ReturnsShortestCooldown()
     {
+        // When all nodes are in cooldown, the fallback picks the one with
+        // shortest remaining cooldown — balancer must never be empty (§8.1 criterion 1).
+        var now = DateTime.UtcNow;
         var nodes = new List<NodeState>
         {
             CreateNode("A", 80, inCooldown: true),
             CreateNode("B", 70, inCooldown: true),
         };
+        // A's cooldown was set by CreateNode(inCooldown: true) using AddMinutes(5).
+        // Give B a shorter cooldown so it's preferred.
+        nodes[1].SetCooldown(now.AddMinutes(1));
 
         var mgr = new ActiveSetManager(nodes);
         var active = mgr.GetActiveTags();
-        active.Should().BeEmpty();
+
+        // Returns the node with shortest cooldown (B), not empty
+        active.Should().ContainSingle().Which.Should().Be("B",
+            "all cooldown → fallback to shortest remaining cooldown");
     }
 
     [Fact]
-    public void GetActiveTags_ExplorerBelowExitThreshold_ShouldBeExcluded()
+    public void GetActiveTags_NodesBelowExitThreshold_ShouldBeExcluded()
     {
-        // Explorer pool must exclude nodes with score < Exit=35
+        // Nodes with score < Exit=35 must never enter the production selector
         var nodes = new List<NodeState>
         {
             CreateNode("A", 80),

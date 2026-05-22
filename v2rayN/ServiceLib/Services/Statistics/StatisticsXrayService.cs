@@ -119,7 +119,10 @@ public class StatisticsXrayService
                     _perTagBaseline[tag] = (uplink, downlink);
                 }
                 if (perTagDeltas.Count > 0)
-                    curItem.PerTagProxyTraffic = perTagDeltas;
+                    curItem.PerTagProxyTraffic = new ConcurrentDictionary<string, NodeTrafficSnapshot>(
+                        perTagDeltas.ToDictionary(
+                            kv => kv.Key,
+                            kv => new NodeTrafficSnapshot(kv.Value.Up, kv.Value.Down, DateTime.UtcNow)));
             }
 
             _serverSpeedItem = server;

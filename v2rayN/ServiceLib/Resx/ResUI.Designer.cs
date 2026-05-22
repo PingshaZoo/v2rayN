@@ -4157,7 +4157,88 @@ namespace ServiceLib.Resx {
                 return ResourceManager.GetString("TbSettingsMuxEnabled", resourceCulture);
             }
         }
-        
+
+        /// <summary>
+        ///   查找类似 Adaptive Node Scheduler 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptive {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptive", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Enabled 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveEnabled {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveEnabled", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Enable adaptive node scheduling (auto-eject failed nodes, auto-recover healthy nodes) 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveEnabledTip {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveEnabledTip", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Probe URL 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveProbeUrl {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveProbeUrl", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 HTTP HEAD target for node health checks (e.g. http://cp.cloudflare.com/) 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveProbeUrlTip {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveProbeUrlTip", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Probe Interval (sec) 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveProbeIntervalSec {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveProbeIntervalSec", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Probe Timeout (ms) 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveProbeTimeoutMs {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveProbeTimeoutMs", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Reset All Adaptive Scores 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveResetScores {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveResetScores", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Clear all persisted EWMA scores and cooldown state (effective next startup) 的本地化字符串。
+        /// </summary>
+        public static string TbSettingsAdaptiveResetScoresTip {
+            get {
+                return ResourceManager.GetString("TbSettingsAdaptiveResetScoresTip", resourceCulture);
+            }
+        }
+
         /// <summary>
         ///   查找类似 v2rayN settings 的本地化字符串。
         /// </summary>

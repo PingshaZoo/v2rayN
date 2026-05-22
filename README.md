@@ -37,19 +37,21 @@ One-click Cloudflare CDN node optimization:
 
 ## Adaptive Node Scheduler
 
-Health-driven active-set scheduling for proxy nodes:
+Health-driven active-set scheduling for proxy nodes. **Conservative Failure Isolation System** — eliminates obviously bad nodes, not a smart load balancer.
 
 1. Enable "Adaptive" in a custom group's settings (right-click → Edit Server → Adaptive)
 2. The scheduler automatically:
-   - Probes all nodes on startup (Bootstrap TCP connect)
-   - Monitors node health via passive observation and active HTTP HEAD probes
+   - Probes all nodes on startup (Bootstrap TCP connect + DNS cache)
+   - Monitors node health via active HTTP probes (HEAD/GET) and passive observation
    - Ejects failed nodes from the active set (cooldown with exponential backoff)
-   - Recovers nodes when they become healthy again (recovery probing)
-   - Uses hysteresis (Entry=60/Exit=35) to prevent flapping
+   - Recovers nodes via 4-stage Recovery Confirmation FSM (probing → stability → active)
+   - Freezes control plane during mass outages (>60% nodes fail) to prevent self-oscillation
+   - Distinguishes DNS failures from node failures (no penalty for DNS issues)
+   - Uses hysteresis (Entry=60/Exit=35) + hash-based cooldown jitter to prevent flapping
 3. All nodes in the active set share traffic uniformly (xray random balancer)
 4. Emergency bypass: disable "Adaptive" checkbox to instantly restore default config
 
-Architecture: v2rayN C# control plane maintains scores + manages active set; xray-core data plane handles actual traffic routing. See `CLAUDE-loadbalance.md` and `adaptive-scheduler-final-audit.md` for design details.
+Architecture: v2rayN C# control plane maintains scores + manages active set; xray-core handles routing. See `docs/superpowers/specs/CLAUDE-loadbalance.md` (v7.3) for full design.
 
 ## How to use
 

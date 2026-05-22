@@ -348,8 +348,8 @@ CfBestIpHandler.RunAsync()
 
 ## Adaptive 自适应节点调度
 
-> **状态：已实现 P0** | 日期：2026-05-21
-> **设计文档**: `CLAUDE-loadbalance.md` (v4.0) | **审计文档**: `adaptive-scheduler-final-audit.md` (v3.0)
+> **状态：已实现 P0 + P1（v7.3）** | 日期：2026-05-22
+> **设计文档**: `docs/superpowers/specs/CLAUDE-loadbalance.md` (v7.3) | **审计文档**: 已合并至设计文档
 
 ### 功能概述
 
@@ -358,13 +358,15 @@ Adaptive Node Scheduler 是一个自适应节点调度系统，自动监控代�
 **解决的问题：**
 - 代理节点被 GFW 干扰或宕机后，用户需要手动切换节点
 - 传统手动测速方式无法持续追踪节点质量变化
-- 多节点负载均衡时，坏节点持续接收流量导致用户感知差
+- GFW 环境下 DNS 污染与节点故障混淆，导致大量误判（v7.3 P1 修复）
+- 机场小包加速干扰探活精度，虚假低延迟误导调度（v7.3 P1 修复）
 
 **用户价值：**
 1. 坏节点自动从 active set 中移除，用户无感知
-2. 节点恢复后自动重新加入调度
-3. 冷启动时通过 Bootstrap 并行探活获得初始分数，避免首次请求命中死节点
-4. 支持一键紧急旁路（EmergencyDisableAdaptive），快速回退到默认配置
+2. 节点恢复后自动重新加入调度（四阶段 Recovery Confirmation FSM）
+3. 冷启动时通过 Bootstrap 并行探活 + DNS 缓存获得初始分数
+4. 大规模外部冲击时自动冻结控制面（Global Instability Freeze），防止自激震荡
+5. 支持一键紧急旁路（EmergencyDisableAdaptive），快速回退到默认配置
 
 ### 架构总览
 
@@ -396,15 +398,23 @@ Adaptive Node Scheduler 是一个自适应节点调度系统，自动监控代�
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| `AdaptiveSchedulerManager` | `AdaptiveSchedulerManager.cs` | 控制面编排器：初始化、启动/停止探活、MonitorActiveSet 循环、紧急旁路 |
-| `ScoreCalculator` | `ScoreCalculator.cs` | EWMA 评分：延迟参考上限 2000ms，延迟权重 0.55，丢包权重 0.45，平方放大 |
-| `FailureCollector` | `FailureCollector.cs` | 失败事件收集：按 FailureType 差异化惩罚（Refused=1.0, Timeout=0.8, NetworkError=0.7, UnexpectedEof=0.4, TlsError=no-op） |
-| `CooldownFsm` | `CooldownFsm.cs` | 冷却状态机：连续失败 ≥2 触发，指数退避 + ±20% jitter，全局上限 1/3 节点 |
-| `ActiveSetManager` | `ActiveSetManager.cs` | 活性集管理：top-K 选择 + explorer + hysteresis（Entry=60, Exit=35） |
-| `BootstrapProber` | `BootstrapProber.cs` | 冷启动探活：并行 TCP connect，2s 超时，全局 3s 截止，结果始终覆盖历史分数 |
-| `ProbeService` | `ProbeService.cs` | 运行时探活服务：通过 xray SOCKS5 入站发 HTTP HEAD 测量 TTFB |
-| `ScoreLogger` | `ScoreLogger.cs` | 分数快照日志：JSONL 格式，事件含 score_snapshot / cooldown_enter / active_set_change / xray_reload |
-| `ReloadPolicyApplier` | `ReloadPolicyApplier.cs` | 策略应用器（Phase 1 fallback）：trailing debounce 15s 后重生成 xray 配置 |
+| `AdaptiveSchedulerManager` | `AdaptiveSchedulerManager.cs` | 控制面编排器：初始化、启动/停止探活、MonitorActiveSet 循环、紧急旁路、freeze/recovery/DNS 集成 |
+| `ScoreCalculator` | `ScoreCalculator.cs` | EWMA 评分：延迟参考上限 2000ms，延迟权重 0.55，丢包权重 0.45，平方放大。**Throughput 禁止进入 Score** |
+| `FailureCollector` | `FailureCollector.cs` | 失败事件收集：按 FailureType 差异化惩罚（Refused=1.0, Timeout=0.8, NetworkError=0.7, UnexpectedEof=0.4, TlsError/DNS=no-op）。**v7.3 Freeze gate**：freeze 期间仅更新 EWMA，阻止 cooldown |
+| `CooldownFsm` | `CooldownFsm.cs` | 冷却状态机：连续失败 ≥2 触发，FNV-1a hash stable jitter，全局上限 1/3 节点 |
+| `ActiveSetManager` | `ActiveSetManager.cs` | 活性集管理：top-K 选择 + hysteresis（Entry=60, Exit=35）+ decision traceability |
+| `BootstrapProber` | `BootstrapProber.cs` | 冷启动探活：并行 TCP connect + DNS 缓存解析，2s 超时，全局 3s 截止 |
+| `ProbeService` | `ProbeService.cs` | 运行时探活：xray SOCKS5 HTTP 探活，多目标 URL + heavy GET probe（破坏小包加速） |
+| `ScoreLogger` | `ScoreLogger.cs` | JSONL telemetry：probe_result / ewma_update / score_snapshot / active_set_change / xray_reload |
+| `ReloadPolicyApplier` | `ReloadPolicyApplier.cs` | 自适应 debounce：滑动 1h window（15s/60s/120s 三级） |
+| **P0 新增** | | |
+| `RecoveryConfirmationFsm` | `RecoveryConfirmationFsm.cs` | 四阶段恢复状态机：ACTIVE→FAILED→RECOVERY_PROBING→STABILITY_VERIFICATION→ACTIVE，指数退避上限 30min |
+| `GlobalFreezeController` | `GlobalFreezeController.cs` | 全局冻结：>60% active 节点失败 → 冻结 60s + 120s hysteresis，防自激震荡 |
+| `IClock` / `SystemClock` / `FakeClock` | `IClock.cs` | 时间抽象接口，新 FSM 模块注入 IClock 实现确定性测试 |
+| **P1 新增** | | |
+| `DnsCacheManager` | `DnsCacheManager.cs` | DNS 缓存 confidence 生命周期：300s TTL，N=3 连续失败失效，lazy check-on-use |
+
+*注：P2/P3 新增模块（XrayStatsPoller、RuntimePolicyApplier、SchedulingQualityMetrics、QualityMetricsReporter）未在此列出，详见设计文档。*
 
 ### NodeState 关键字段
 
@@ -415,6 +425,8 @@ Adaptive Node Scheduler 是一个自适应节点调度系统，自动监控代�
 | `EwmaLossRate` | time-decayed EWMA 丢包率 |
 | `ConsecutiveFailures` | 连续失败计数，≥2 时 CooldownFsm 评估是否进入 cooldown |
 | `IsInCooldown` | 是否处于冷却期（cooldown 节点不参与 active set） |
+| `HealthState` | v7.2: 健康状态机（Active / Failed / RecoveryProbing / StabilityVerification） |
+| `CachedIp` / `DnsCacheConfidence` | v7.3: DNS 缓存 IP + confidence 级别 |
 
 ### 启动序列
 
@@ -457,20 +469,26 @@ public async Task EmergencyDisableAdaptiveAsync()
 
 ### 测试覆盖
 
+> 全量测试：329 total（326 pass，3 xray integration tests 需要 xray-core）
+
 | 测试文件 | 测试数 | 覆盖内容 |
 |---------|--------|---------|
-| `FailureCollectorTests.cs` | 9 | 各 FailureType 的 penaltyLoss/latency 值，TlsError no-op，相对惩罚排序 |
-| `BootstrapAndScorePersistenceTests.cs` | 5 | Score floor=1.0, worst-case 计算, Bootstrap 覆盖历史语义, 分数过期检测 |
-| `ActiveSetManagerTests.cs` | 12 | Entry/Exit 阈值, sticky 行为, oscillation 免疫, explorer 排除, cooldown 排除, 边界场景 |
-| `EmergencyDisableAdaptiveTests.cs` | 4 | 幂等性, IsRunning/GetCurrentConfig/Nodes/ProbePorts 清空 |
-| `XrayTagDuplicationIntegrationTests.cs` | 2 | xray selector dedup 行为契约检测（[A×3,B×1]→~50%），重启耗时测量（~1.1s） |
-| `CoreConfigV2rayServiceTests.cs` | 3 | active-set unique tags 生成，equal scores 每个出现一次，cooldown 排除 |
+| `FailureCollectorTests.cs` | 9 | FailureType penalty 值，TlsError no-op，惩罚排序 |
+| `BootstrapAndScorePersistenceTests.cs` | 5 | Score floor, worst-case, Bootstrap 覆盖历史, 分数过期 |
+| `ActiveSetManagerTests.cs` | 12 | Entry/Exit hysteresis, sticky, oscillation 免疫, explorer, cooldown, 全冷却兜底 |
+| `EmergencyDisableAdaptiveTests.cs` | 4 | 幂等性, stop 清空 |
+| `RecoveryConfirmationFsmTests.cs` | 23 | P0: 四阶段恢复 FSM, 合法/非法迁移, 指数退避, 完整生命周期 |
+| `GlobalFreezeControllerTests.cs` | 21 | P0: freeze 触发/阻塞/解除, hysteresis, escalation, 边界 |
+| `DnsCacheManagerTests.cs` | 18 | P1: 缓存 CRUD, confidence 生命周期, TTL 到期, 失效, 线程安全 |
+| `DnsAttributionTests.cs` | 8 | P1: DNS 故障零惩罚, no-op, GlobalFreeze 隔离, 混合失败 |
+| `FreezeGateTests.cs` | 7 | §11.8: freeze 期间 EWMA 更新/consecutiveFailures blocked |
+| `XrayTagDuplicationIntegrationTests.cs` | 2 | xray selector dedup 行为契约（需 xray-core） |
+| 其他 10 个测试文件 | ~220 | P2/P3: Probe, Telemetry, Stats, Metrics, Runtime, Boundary |
 
 ### 设计文档引用
 
-- **设计文档**: [CLAUDE-loadbalance.md](CLAUDE-loadbalance.md) — 完整设计 v4.0（架构、数据结构、评分公式、状态机、代码骨架）
-- **审计文档**: [adaptive-scheduler-final-audit.md](adaptive-scheduler-final-audit.md) — 综合评审 v3.0（P0 已验证、行动计划、验收标准）
-- **测试**: [ServiceLib.Tests/AdaptiveNodeScheduler/](v2rayN/ServiceLib.Tests/AdaptiveNodeScheduler/)
+- **设计文档**: [docs/superpowers/specs/CLAUDE-loadbalance.md](docs/superpowers/specs/CLAUDE-loadbalance.md) — v7.3 完整设计 + P0/P1 代码实现记录
+- **测试**: [ServiceLib.Tests/AdaptiveNodeScheduler/](v2rayN/ServiceLib.Tests/AdaptiveNodeScheduler/) (19 test files, 329 tests)
 
 ---
 

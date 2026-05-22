@@ -1806,4 +1806,31 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="FillCfBestIpDomainsSetUrl" xml:space="preserve">
     <value>Please fill in the Domains Set URL</value>
   </data>
+  <data name="TbSettingsAdaptive" xml:space="preserve">
+    <value>Adaptive Node Scheduler</value>
+  </data>
+  <data name="TbSettingsAdaptiveEnabled" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="TbSettingsAdaptiveEnabledTip" xml:space="preserve">
+    <value>Enable adaptive node scheduling (auto-eject failed nodes, auto-recover healthy nodes)</value>
+  </data>
+  <data name="TbSettingsAdaptiveProbeUrl" xml:space="preserve">
+    <value>Probe URL</value>
+  </data>
+  <data name="TbSettingsAdaptiveProbeUrlTip" xml:space="preserve">
+    <value>HTTP HEAD target for node health checks (e.g. http://cp.cloudflare.com/)</value>
+  </data>
+  <data name="TbSettingsAdaptiveProbeIntervalSec" xml:space="preserve">
+    <value>Probe Interval (sec)</value>
+  </data>
+  <data name="TbSettingsAdaptiveProbeTimeoutMs" xml:space="preserve">
+    <value>Probe Timeout (ms)</value>
+  </data>
+  <data name="TbSettingsAdaptiveResetScores" xml:space="preserve">
+    <value>Reset All Adaptive Scores</value>
+  </data>
+  <data name="TbSettingsAdaptiveResetScoresTip" xml:space="preserve">
+    <value>Clear all persisted EWMA scores and cooldown state (effective next startup)</value>
+  </data>
 </root>

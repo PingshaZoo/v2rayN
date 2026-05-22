@@ -9,11 +9,33 @@ namespace ServiceLib.Handler.AdaptiveNodeScheduler;
 /// Maintains the QoS Engine (scoring, cooldown, probing) and delegates policy
 /// application to an <see cref="IAdaptivePolicyApplier"/>.
 ///
-/// Startup sequence:
-///   1. InitializeNodes() — sync, builds node states + allocates probe ports.
+/// <h2>Lifecycle</h2>
+/// A full scheduling cycle goes through these phases:
+///   <b>Phase 1 — Init</b>: <see cref="InitializeNodes"/> — sync, builds node states + allocates probe ports.
 ///      Returns initial AdaptiveConfig so the first LoadCore includes probe inbounds.
-///   2. StartMonitoringAsync() — async, runs bootstrap probing, starts ProbeService
-///      and active-set monitor loop. Call AFTER LoadCore.
+///   <b>Phase 2a — Bootstrap</b>: <see cref="BootstrapAsync"/> — async, restores persisted scores
+///      then runs parallel TCP-connect probes to seed initial scores. Call BEFORE LoadCore.
+///   <b>Phase 2b — Runtime</b>: <see cref="StartProbesAsync"/> — async, starts ProbeService + ScoreLogger
+///      + active-set monitor loop. Call AFTER LoadCore since probes go through xray SOCKS5 inbounds.
+///   <b>Shutdown</b>: <see cref="StopAsync"/> or <see cref="IAsyncDisposable.DisposeAsync"/> —
+///      cancels monitor loop, disposes ProbeService/ScoreLogger/policyApplier, clears state.
+///
+/// <h2>Profile / Group Switching</h2>
+/// When the user switches to a different node group that has adaptive enabled:
+///   1. The caller must stop the current adaptive session (<see cref="StopAsync"/>)
+///   2. Re-initialize with <see cref="InitializeNodes"/> + <see cref="BootstrapAsync"/> + <see cref="StartProbesAsync"/>
+///   3. After <see cref="StopAsync"/>, <see cref="IsRunning"/> is false and all internal
+///      state (_nodes, _probePorts, _tagToIndexId) is cleared — ready for a fresh start.
+///
+/// <h2>Singleton</h2>
+/// This class uses a static <see cref="Lazy{T}"/> singleton (<see cref="Instance"/>).
+/// <see cref="StopAsync"/> fully resets state, so re-initialization is safe without
+/// creating a new instance. DI would be cleaner but is not available in this codebase;
+/// the singleton is the pragmatic choice.
+///
+/// <h2>Emergency Bypass</h2>
+/// <see cref="EmergencyDisableAdaptiveAsync"/> provides a one-click escape hatch:
+/// sets Enabled=false, calls StopAsync, and notifies the caller to restore default config.
 ///
 /// When the active set changes meaningfully, <see cref="OnActiveSetChangedAsync"/>
 /// builds a new AdaptiveConfig (including current scores) and calls the policy
@@ -30,6 +52,10 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     private readonly ScoreCalculator _scorer = new();
     private readonly CooldownFsm _cooldown = new();
     private readonly BootstrapProber _bootstrapper = new();
+    private readonly IClock _clock = new SystemClock();
+    private readonly RecoveryConfirmationFsm _recoveryFsm;
+    private readonly GlobalFreezeController _freezeController;
+    private readonly DnsCacheManager _dnsCache;
 
     private FailureCollector? _collector;
     private ProbeService? _probeService;
@@ -49,6 +75,22 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
     private AdaptiveSchedulerManager()
     {
+        _recoveryFsm = new RecoveryConfirmationFsm(_clock);
+        _freezeController = new GlobalFreezeController(_clock);
+        _dnsCache = new DnsCacheManager(_clock);
+        _freezeController.EmergencyDisableRequested += OnFreezeEscalation;
+    }
+
+    private void OnFreezeEscalation(string reason)
+    {
+        _ = HandleFreezeEscalationAsync(reason);
+    }
+
+    private async Task HandleFreezeEscalationAsync(string reason)
+    {
+        await _updateFunc!(false,
+            $"[{_tag}] FREEZE_COOLDOWN escalation: {reason}. Triggering EmergencyDisableAdaptive...");
+        await EmergencyDisableAdaptiveAsync();
     }
 
     // ── Public API ──────────────────────────────────────────
@@ -112,7 +154,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         _probePorts = AllocateProbePorts();
         _adaptiveItem = config.AdaptiveSchedulerItem;
 
-        _collector = new FailureCollector(_scorer, _cooldown);
+        _freezeController.Reset();
+        _collector = new FailureCollector(_scorer, _cooldown, null, _freezeController);
         _activeSetManager = new ActiveSetManager(_nodes);
         _tagToIndexId = _nodes.ToDictionary(n => n.Tag, n => n.ChildIndexId);
         _nodesInitialized = true;
@@ -143,7 +186,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         await RestorePersistedScoresAsync();
 
         await _updateFunc!(false, $"[{_tag}] Bootstrap probing {_nodes.Count} nodes...");
-        await _bootstrapper.InitializeAsync(_nodes, _scorer);
+        await _bootstrapper.InitializeAsync(_nodes, _scorer, _dnsCache);
         await _updateFunc!(false, $"[{_tag}] Bootstrap complete.");
     }
 
@@ -159,11 +202,12 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         if (!_nodesInitialized || _nodes.Count == 0)
             return;
 
-        _probeService = new ProbeService(_nodes, tag => _probePorts[tag], _collector!, _adaptiveItem!);
-        _probeService.Start();
-
-        _scoreLogger = new ScoreLogger(_nodes, msg => _ = _updateFunc!(false, $"[{_tag}] {msg}"));
+        _scoreLogger = new ScoreLogger(_nodes);
         _scoreLogger.Start();
+
+        _collector = new FailureCollector(_scorer, _cooldown, _scoreLogger, _freezeController);
+        _probeService = new ProbeService(_nodes, tag => _probePorts[tag], _collector, _adaptiveItem!, _recoveryFsm);
+        _probeService.Start();
 
         // Prime the change tracker with the current (post-bootstrap) top-K set
         // so the first monitor check doesn't fire a spurious reload.
@@ -209,6 +253,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         _scoreLogger?.Stop();
         _scoreLogger = null;
 
+        _freezeController.Reset();
+
         _nodes.Clear();
         _probePorts.Clear();
         _tagToIndexId.Clear();
@@ -235,22 +281,43 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     /// Restores persisted scores from ProfileExItem before bootstrap probing.
     /// Nodes with a saved AdaptiveScore > 0 start from their known state rather
     /// than default scores, preserving EWMA state across restarts.
+    /// Scores older than 4 hours are treated as stale and reset to 50.
     /// </summary>
     private async Task RestorePersistedScoresAsync()
     {
         var profileExs = await ProfileExManager.Instance.GetProfileExs();
+        var now = DateTime.UtcNow;
+        var staleThreshold = TimeSpan.FromHours(4);
         int restored = 0;
+        int stale = 0;
+        int healthRestored = 0;
         foreach (var node in _nodes)
         {
             var ex = profileExs.FirstOrDefault(p => p.IndexId == node.ChildIndexId);
             if (ex == null || ex.AdaptiveScore <= 0) continue;
 
+            if (ex.AdaptiveLastObserved != default && now - ex.AdaptiveLastObserved > staleThreshold)
+            {
+                // Score is stale — reset to 50, ignore persisted value
+                node.UpdateScore(500.0, 0.0, 50.0, 0);
+                stale++;
+                continue;
+            }
+
             double lat = ex.AdaptiveLatency > 0 ? ex.AdaptiveLatency : 500.0;
             node.UpdateScore(lat, 0.0, ex.AdaptiveScore, 0);
             restored++;
+
+            // P0#1: Restore recovery FSM state
+            if (ex.AdaptiveHealthState > 0) // 0 = Active (default), skip for default
+            {
+                var healthState = (NodeHealthState)ex.AdaptiveHealthState;
+                node.SetHealthState(healthState);
+                healthRestored++;
+            }
         }
-        if (restored > 0)
-            await _updateFunc!(false, $"[{_tag}] Restored persisted scores for {restored}/{_nodes.Count} nodes.");
+        if (restored > 0 || stale > 0 || healthRestored > 0)
+            await _updateFunc!(false, $"[{_tag}] Restored scores: {restored} fresh, {stale} stale, {healthRestored} health FSM states out of {_nodes.Count} nodes.");
     }
 
     private async Task MonitorActiveSetAsync(CancellationToken ct)
@@ -265,7 +332,70 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
             if (_activeSetManager == null || !_isRunning) continue;
 
-            if (_activeSetManager.HasActiveSetChanged())
+            // P0#1: Advance recovery FSM
+            // Step 1: FAILED nodes whose cooldown expired → RECOVERY_PROBING
+            // Step 2: STABILITY_VERIFICATION nodes whose verification period elapsed → ACTIVE
+            bool recoveryPromoted = false;
+            foreach (var node in _nodes)
+            {
+                if (node.HealthState == NodeHealthState.Failed && !node.IsInCooldown)
+                {
+                    _recoveryFsm.TransitionToRecoveryProbing(node);
+                }
+                if (_recoveryFsm.ShouldPromoteToActive(node))
+                {
+                    node.ResetHealthFsm();
+                    recoveryPromoted = true;
+                    _scoreLogger?.LogEvent("recovery_promoted", new Dictionary<string, object?>
+                    {
+                        ["node"] = node.Tag,
+                        ["from"] = "stability_verification",
+                        ["to"] = "active",
+                    });
+                }
+            }
+
+            // P0#1: Evaluate global freeze state before allowing any mutation
+            var activeTags = _activeSetManager.GetActiveTags();
+            var freezeDecision = _freezeController.Evaluate(activeTags);
+
+            switch (freezeDecision.Type)
+            {
+                case FreezeDecisionType.TriggerFreeze:
+                    _scoreLogger?.LogEvent("global_freeze", new Dictionary<string, object?>
+                    {
+                        ["reason"] = freezeDecision.Reason,
+                        ["frozen_active_tags"] = freezeDecision.FrozenActiveTags,
+                        ["freeze_duration_s"] = 60,
+                    });
+                    await _updateFunc!(false,
+                        $"[{_tag}] GLOBAL FREEZE triggered: {freezeDecision.Reason}. Active set frozen for 60s.");
+                    continue; // skip active-set check this cycle
+
+                case FreezeDecisionType.BlockMutation:
+                    // Freeze still active — skip all mutations, probe continues
+                    continue;
+
+                case FreezeDecisionType.Unfreeze:
+                {
+                    _scoreLogger?.LogEvent("global_freeze_end", new Dictionary<string, object?>
+                    {
+                        ["freeze_duration_s"] = (_clock.UtcNow - _freezeController.FreezeStartedAt).TotalSeconds,
+                        ["current_active_tags"] = activeTags,
+                    });
+                    await _updateFunc!(false,
+                        $"[{_tag}] Global freeze ended. Resuming normal active-set management.");
+                    _activeSetManager.MarkDirty(); // force re-evaluation next cycle
+                    continue;
+                }
+
+                case FreezeDecisionType.EmergencyDisable:
+                    // Handled by the event subscription → EmergencyDisableAdaptiveAsync
+                    continue;
+            }
+
+            // Normal operation — check for active-set changes or recovery promotions
+            if (_activeSetManager.HasActiveSetChanged() || recoveryPromoted)
             {
                 var elapsed = (DateTime.UtcNow - lastUpdate).TotalMilliseconds;
                 if (elapsed >= minUpdateIntervalMs)
@@ -293,6 +423,16 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         await _updateFunc!(false,
             $"[{_tag}] Active set changed: active=[{string.Join(",", active)}] cooldown=[{string.Join(",", cooldown)}]");
 
+        _scoreLogger?.LogEvent("active_set_change", new Dictionary<string, object?>
+        {
+            ["active_tags"] = active,
+            ["cooldown_tags"] = cooldown,
+            ["scores"] = _nodes.ToDictionary(n => n.Tag, n => (object)n.Score),
+            ["added"] = _activeSetManager.LastAdded,
+            ["removed"] = _activeSetManager.LastRemoved,
+            ["change_reasons"] = BuildChangeReasons(_activeSetManager.LastAdded, _activeSetManager.LastRemoved),
+        });
+
         var config = new AdaptiveConfig
         {
             ActiveTags = active,
@@ -305,7 +445,14 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         AppEvents.ActiveSetChanged.Publish(config);
 
         if (_policyApplier != null)
+        {
             await _policyApplier.ApplyAsync(config);
+            _scoreLogger?.LogEvent("xray_reload", new Dictionary<string, object?>
+            {
+                ["active_tags"] = active,
+                ["trigger"] = "active_set_change",
+            });
+        }
     }
 
     private static List<NodeState> BuildNodeStates(
@@ -341,6 +488,40 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
             ports[node.Tag] = port;
         }
         return ports;
+    }
+
+    /// <summary>
+    /// Builds a per-node reason map explaining WHY each node entered or left
+    /// the sticky top-K set. This is decision traceability (§3.4): every
+    /// active-set change must be explainable after the fact.
+    /// </summary>
+    private Dictionary<string, string> BuildChangeReasons(
+        IReadOnlyList<string> added, IReadOnlyList<string> removed)
+    {
+        var reasons = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var tag in added)
+        {
+            var node = _nodes.FirstOrDefault(n => n.Tag == tag);
+            if (node == null) continue;
+            if (!node.IsInCooldown && node.Score >= ActiveSetManager.EntryThreshold)
+                reasons[tag] = $"score_crossed_entry: score={node.Score:F1} >= {ActiveSetManager.EntryThreshold}";
+            else if (!node.IsInCooldown)
+                reasons[tag] = $"score_ranking: entered top-K at score={node.Score:F1}";
+            else
+                reasons[tag] = $"cooldown_cleared: score={node.Score:F1}";
+        }
+        foreach (var tag in removed)
+        {
+            var node = _nodes.FirstOrDefault(n => n.Tag == tag);
+            if (node == null) continue;
+            if (node.IsInCooldown)
+                reasons[tag] = $"entered_cooldown: score={node.Score:F1}, consecutive_failures={node.ConsecutiveFailures}";
+            else if (node.Score < ActiveSetManager.ExitThreshold)
+                reasons[tag] = $"score_below_exit: score={node.Score:F1} < {ActiveSetManager.ExitThreshold}";
+            else
+                reasons[tag] = $"score_ranking: displaced from top-K at score={node.Score:F1}";
+        }
+        return reasons;
     }
 
     public async ValueTask DisposeAsync()
