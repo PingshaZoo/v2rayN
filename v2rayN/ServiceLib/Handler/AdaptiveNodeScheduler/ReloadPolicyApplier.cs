@@ -32,7 +32,7 @@ public sealed class ReloadPolicyApplier : IAdaptivePolicyApplier
     private static readonly TimeSpan BudgetWindow = TimeSpan.FromHours(1);
     private const int NormalReloadLimit = 6;     // ≤6/hr → normal debounce
     private const int ExtendedReloadLimit = 10;  // 7-10/hr → extended debounce
-    private static readonly TimeSpan NormalInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan NormalInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ExtendedInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ThrottledInterval = TimeSpan.FromSeconds(120);
     private readonly List<DateTime> _reloadTimestamps = [];
@@ -80,6 +80,27 @@ public sealed class ReloadPolicyApplier : IAdaptivePolicyApplier
                 ScheduleLocked(effectiveInterval - elapsed);
                 return;
             }
+        }
+
+        await _reloadFunc(config);
+        RecordReload();
+    }
+
+    /// <summary>
+    /// Apply immediately, bypassing debounce. Used for catastrophic scenarios
+    /// (all eligible nodes disappeared) per §6.4 severity tiering.
+    /// </summary>
+    public async Task ApplyImmediateAsync(AdaptiveConfig config, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            if (_disposed) return;
+            // Cancel any pending debounced reload — this immediate apply supersedes it
+            _pendingConfig = null;
+            _debounceCts?.Cancel();
+            _debounceCts?.Dispose();
+            _debounceCts = null;
+            _lastReload = DateTime.UtcNow;
         }
 
         await _reloadFunc(config);

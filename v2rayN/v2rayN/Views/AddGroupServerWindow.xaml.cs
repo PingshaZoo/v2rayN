@@ -52,9 +52,22 @@ public partial class AddGroupServerWindow
             this.WhenActivated(d =>
             {
                 ViewModel?.WhenAnyValue(x => x.AdaptiveEnabled)
-                    .Subscribe(a => txtAdaptiveHint.Visibility = a ? Visibility.Visible : Visibility.Collapsed)
+                    .Subscribe(a =>
+                    {
+                        var vis = a ? Visibility.Visible : Visibility.Collapsed;
+                        txtAdaptiveHint.Visibility = vis;
+                        lblActiveFraction.Visibility = vis;
+                        txtActiveFraction.Visibility = vis;
+                        lblMinProduction.Visibility = vis;
+                        txtMinProductionNodes.Visibility = vis;
+                        lblMaxProduction.Visibility = vis;
+                        txtMaxProductionNodes.Visibility = vis;
+                    })
                     .DisposeWith(d);
             });
+            this.Bind(ViewModel, vm => vm.AdaptiveActiveFraction, v => v.txtActiveFraction.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveMinProductionNodes, v => v.txtMinProductionNodes.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveMaxProductionNodes, v => v.txtMaxProductionNodes.Text).DisposeWith(disposables);
             this.OneWayBind(ViewModel, vm => vm.SubItems, v => v.cmbSubChildItems.ItemsSource).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.SelectedSubItem, v => v.cmbSubChildItems.SelectedItem).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.Filter, v => v.cmbFilter.Text).DisposeWith(disposables);

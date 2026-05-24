@@ -46,11 +46,9 @@ public class ProfileItemModel : ReactiveObject
     [Reactive]
     public string AdaptiveLatencyVal { get; set; }
 
+    /// <summary>Combined status: Cooldown > HealthState > TrafficTier.</summary>
     [Reactive]
-    public string AdaptiveCooldownVal { get; set; }
-
-    [Reactive]
-    public string AdaptiveActiveVal { get; set; }
+    public string AdaptiveStatusVal { get; set; }
 
     // Sort backing values — non-string versions for sorting
     public int AdaptiveScore { get; set; }

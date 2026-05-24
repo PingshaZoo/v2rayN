@@ -150,13 +150,14 @@ public class ProfileExManager
         IndexIdEnqueue(indexId);
     }
 
-    public void SetAdaptiveData(string indexId, int score, int latency, bool cooldown, bool active)
+    public void SetAdaptiveData(string indexId, int score, int latency, bool cooldown, bool active, int trafficTier = 1)
     {
         var profileEx = GetProfileExItem(indexId);
         profileEx.AdaptiveScore = score;
         profileEx.AdaptiveLatency = latency;
         profileEx.AdaptiveCooldown = cooldown ? 1 : 0;
         profileEx.AdaptiveActive = active ? 1 : 0;
+        profileEx.AdaptiveTrafficTier = trafficTier;
         profileEx.AdaptiveLastObserved = DateTime.UtcNow;
         IndexIdEnqueue(indexId);
     }

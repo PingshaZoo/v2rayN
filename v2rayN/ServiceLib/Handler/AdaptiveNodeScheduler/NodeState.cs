@@ -3,6 +3,12 @@ namespace ServiceLib.Handler.AdaptiveNodeScheduler;
 public enum ProxyProtocol { Tcp, Udp }
 
 /// <summary>
+/// v7.5 P2: Traffic exposure tier. Orthogonal to HealthState —
+/// a node with HealthState=Active can be Standby if the Production Pool is full.
+/// </summary>
+public enum TrafficTier { Production, Standby }
+
+/// <summary>
 /// v7.0 Recovery Confirmation FSM states (§10.1).
 ///
 /// Health state is distinct from cooldown: cooldown is a time-based ejection
@@ -45,6 +51,9 @@ public sealed class NodeState
 
     // ── recovery FSM state (§10.1) ─────────────────────────────
     private NodeHealthState _healthState = NodeHealthState.Active;
+
+    // ── traffic tier (P2: orthogonal to HealthState) ───────────
+    private TrafficTier _trafficTier = TrafficTier.Standby;
     private int _recoveryProbeSuccessCount;
     private DateTime _stabilityVerificationStartedAt = DateTime.MinValue;
     private int _cooldownBackoffLevel; // n for exponential backoff: 30s * 2^n
@@ -68,6 +77,7 @@ public sealed class NodeState
     public int RecoveryProbeSuccessCount => _recoveryProbeSuccessCount;
     public int CooldownBackoffLevel => _cooldownBackoffLevel;
     public DateTime StabilityVerificationStartedAt => _stabilityVerificationStartedAt;
+    public TrafficTier TrafficTier => _trafficTier;
 
     public string? CachedIp => _cachedIp;
     public DateTime DnsLastResolved => _dnsLastResolved;
@@ -141,6 +151,13 @@ public sealed class NodeState
         }
     }
 
+    // ── traffic tier (P2) ──────────────────────────────────────
+
+    public void SetTrafficTier(TrafficTier tier)
+    {
+        lock (_lock) { _trafficTier = tier; }
+    }
+
     // ── DNS cache management (§13.4) ───────────────────────────
 
     public void SetCachedIp(string ip, DateTime resolvedAt)
@@ -199,11 +216,12 @@ public sealed class NodeState
         {
             return new NodeSnapshot(Tag, _score, _ewmaLatencyMs,
                                     _ewmaLossRate, IsInCooldown, _cooldownUntil,
-                                    _healthState);
+                                    _healthState, _trafficTier);
         }
     }
 }
 
 public record NodeSnapshot(string Tag, double Score, double LatencyMs,
                            double LossRate, bool InCooldown, DateTime CooldownUntil,
-                           NodeHealthState HealthState = NodeHealthState.Active);
+                           NodeHealthState HealthState = NodeHealthState.Active,
+                           TrafficTier TrafficTier = TrafficTier.Standby);

@@ -1,11 +1,23 @@
-# v2rayN Adaptive Node Scheduler — 完整设计与实现文档
+# v2rayN Adaptive Node Scheduler — 历史归档
 
-**版本**: 7.3（2026-05-22 v7.3 P1 DNS + Probe 代码实现版）
-**来源**: 合并自 v6.0 最终合并版 + Claude/DeepSeek/OpenAI 三方评审综合修订 + v7.1 10 项语义精炼 + v7.2 P0 C# 代码实现 + v7.3 P1 DNS 归因分离 + 随机载荷探活
+> **⚠️ 本文档已于 2026-05-23 归档为历史参考。**
+>
+> 本文档曾同时承担产品设计、系统架构、审计记录、评审讨论、实现追踪、未来路线图等多重角色，导致信息层级塌陷。v7.5 文档架构评审后，内容已拆分到以下 4 个文件：
+
+| 文件 | 用途 | 定位 |
+|------|------|------|
+| **[adaptive-scheduler-spec.md](adaptive-scheduler-spec.md)** | 核心规范 | **唯一权威**。架构、状态机、约束、模块契约、不变式 |
+| **[adaptive-scheduler-status.md](adaptive-scheduler-status.md)** | 工程状态 | 已实现/未实现、P0/P1/P2 状态、风险、测试覆盖 |
+| **[reviews/](reviews/)** | 评审归档 | 谁说了什么、为什么这样改、reasoning history、架构讨论 |
+| **[runtime-observations.md](runtime-observations.md)** | 运行时观测 | Reload frequency、cooldown churn、evening stability 等 evidence |
+
+> **Claude Code 实现时请以 `adaptive-scheduler-spec.md` 为 authoritative source。**
+> 本文档以下内容为历史参考，可能与当前 spec 存在差异。
+
+---
+
+**归档版本**: 7.5（2026-05-23）
 **系统正式名称**: **Conservative Failure Isolation System**
-**定位**: 三层描述 — 系统层 "Conservative Failure Isolation System" / 机制层 "Adaptive Active-Set Health Controller" / 目标层 "Mixed-Flow Proxy Stability Controller"
-**核心收益来源**: 真正的系统收益来自**减少错误调度**，而不是**提高调度精度**
-**约束**: C# / Windows / v2rayN 架构，不 fork xray-core
 
 ---
 
@@ -52,6 +64,8 @@
 19. [实时节点速度显示](#19-实时节点速度显示)
 20. [未来方向：被动混合流观测器](#20-未来方向被动混合流观测器)
 21. [真正成功标准](#21-真正成功标准)
+22. [外部评审：架构评估与生命周期治理方向](#22-外部评审架构评估与生命周期治理方向)
+23. [文档架构评审：信息层级重建](#23-文档架构评审信息层级重建)
 
 **附录**
 
@@ -1990,9 +2004,11 @@ ReloadPolicyApplier 执行 reload 前必须:
 
 ## 16. 实施行动计划与完成记录
 
-### 16.0 当前计划与优先级总表（v7.1，2026-05-22）
+### 16.0 历史计划与优先级总表（v7.1，2026-05-22）
 
-> **核心一句话**：当前最大任务不是"更智能"，而是"更克制"——补状态机、堵语义漏洞、明确边界条件，让系统从"想法集合"变成"可长期维护的架构文档"。
+> **注意**：以下为 v7.1 制定的原始计划，已于 v7.2/v7.3 全部完成。**v7.4 重新评估后制定了新的 P0/P1/P2 行动计划**（见下方 [v7.4 问题发现与行动计划](#v74-问题发现与行动计划2026-05-23)），聚焦于 Mutation Authority 收敛与 Reload Lifecycle 治理。
+
+> **核心一句话（v7.1）**：当前最大任务不是"更智能"，而是"更克制"——补状态机、堵语义漏洞、明确边界条件，让系统从"想法集合"变成"可长期维护的架构文档"。
 
 #### 优先级定义
 
@@ -2146,6 +2162,54 @@ ReloadPolicyApplier 执行 reload 前必须:
 | **P1 新增总计** | **33** | |
 
 > 全量测试：329 total（326 pass + 3 xray integration tests 需要 xray-core）。
+
+---
+
+### v7.4 问题发现与行动计划（2026-05-23）
+
+> **背景**：用户反馈两个生产问题——节点 cooldown 导致频繁 xray 重启、UI 设置分散在 Settings 和 PolicyGroup 两处。代码审查 + OpenAI 外部评审确认根因为 **Mutation Authority 碎片化** + **代码策略与文档哲学脱节**。详见 §22 外部评审。
+
+#### v7.4 发现的 Bug
+
+| # | Bug | 根因 | 影响 | 代码位置 |
+|---|-----|------|------|---------|
+| B1 | **手动清除 cooldown 立即触发 xray 重启** | `ActiveSetManager.HasActiveSetChanged()` 只检查 `!IsInCooldown`，不检查 `HealthState`。手动清除 `_cooldownUntil` 后节点直接进入 eligible 池，跳过 Recovery FSM（FAILED → RECOVERY_PROBING → STABILITY_VERIFICATION → ACTIVE） | 与 §10.7 声明的非法迁移 `FAILED → ACTIVE` 冲突；每次手动清除 cooldown 触发一次 reload | [ActiveSetManager.cs:167-168](v2rayN/ServiceLib/Handler/AdaptiveNodeScheduler/ActiveSetManager.cs#L167-L168) — eligible 过滤条件缺 `HealthState == Active` |
+| B2 | **RECOVERY_PROBING / STABILITY_VERIFICATION 节点可能进入 production selector** | 同上根因：`HasActiveSetChanged()` 和 `GetActiveTags()` 的 eligible 判定仅用 `!IsInCooldown`，未排除非 ACTIVE 健康状态的节点 | 恢复中的节点在完成验证前就被加入 active set，违背 §10.1 设计意图（"STABILITY_VERIFICATION 节点仅接收 probe traffic"） | [ActiveSetManager.cs:167-168](v2rayN/ServiceLib/Handler/AdaptiveNodeScheduler/ActiveSetManager.cs#L167-L168) + [ActiveSetManager.cs:61-71](v2rayN/ServiceLib/Handler/AdaptiveNodeScheduler/ActiveSetManager.cs#L61-L71) — `GetActiveTags()` 同样问题 |
+
+#### v7.4 发现的代码-文档哲学脱节
+
+| 参数 | 当前值 | 隐含哲学 | 文档声明 (§4.4) | 文件位置 |
+|------|--------|---------|----------------|---------|
+| `minUpdateIntervalMs` | 10s | 响应性优先 | 稳定性 > 响应性 > 最优性 | [AdaptiveSchedulerManager.cs:327](v2rayN/ServiceLib/Handler/AdaptiveNodeScheduler/AdaptiveSchedulerManager.cs#L327) |
+| `NormalInterval` | 15s | 响应性优先 | 稳定性 > 响应性 > 最优性 | [ReloadPolicyApplier.cs:35](v2rayN/ServiceLib/Handler/AdaptiveNodeScheduler/ReloadPolicyApplier.cs#L35) |
+| `checkIntervalMs` | 5s | 响应性优先 | 稳定性 > 响应性 > 最优性 | [AdaptiveSchedulerManager.cs:325](v2rayN/ServiceLib/Handler/AdaptiveNodeScheduler/AdaptiveSchedulerManager.cs#L325) |
+
+#### v7.4 P0 — 立即修复（Semantic Correctness Repair，不改架构）
+
+| # | 任务 | 说明 | 影响 |
+|---|------|------|------|
+| P0-1 | **`ActiveSetManager` 加 `HealthState` gate** | `HasActiveSetChanged()` 和 `GetActiveTags()` 的 eligible 条件从 `!n.IsInCooldown` 改为 `!n.IsInCooldown && n.HealthState == NodeHealthState.Active`。RECOVERY_PROBING 和 STABILITY_VERIFICATION 节点不入 production selector | 修复 B1 + B2，消除手动清除 cooldown 的即时重启；恢复节点必须走完 Recovery FSM |
+| P0-2 | **手动清除 cooldown 走合法 FSM 路径** | 用户手动清除 cooldown 时，不直接清零 `_cooldownUntil`，而是通过 Recovery FSM 的合法迁移：FAILED → RECOVERY_PROBING（重置 backoff、清除 `_cooldownUntil`），由 probe 验证后渐进恢复 | 修复 §10.7 声明的非法迁移 `FAILED → ACTIVE` |
+| P0-3 | **全 eligible 为空时的兜底逻辑** | 当所有节点都不在 ACTIVE 状态时，`GetActiveTags()` 的 fallback 应优先选 RECOVERY_PROBING 中 probe 成功次数最多的节点，其次选 cooldown 剩余最短的。确保 balancer selector 永不为空 |
+
+#### v7.4 P1 — 短期优化（Reload Aggressiveness Tuning + UI Cleanup）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| P1-1 | **延长 reload 基线间隔** | `NormalInterval` 15s → 30s，`minUpdateIntervalMs` 10s → 30s。为 catastrophic failure（全 eligible 为空、freeze escalate）保留快速响应路径 |
+| P1-2 | **UI 合并到 PolicyGroup 对话框** | 删除 Settings > Adaptive Node Scheduler Tab；ProbeUrl/ProbeIntervalSec/ProbeTimeoutMs/ProbeHeavyFraction 移到 PolicyGroup 编辑对话框；仅 AdaptiveEnabled=true 时显示这些设置；Settings 仅保留 engine 开关和 telemetry/debug |
+| P1-3 | **删除全局 `Enabled` 双重检查** | `TryInitializeAdaptiveNodes` 移除 `_config.AdaptiveSchedulerItem.Enabled` 检查，仅保留 per-group `AdaptiveEnabled` |
+| P1-4 | **debounce severity 分级** | 普通 cooldown（单个节点进/出）→ 30-60s batching；全节点故障（eligible 池为空）→ 立即执行；Freeze 期间 cooldown 入队，freeze 解除后一次性评估 |
+
+#### v7.4 P2 — 架构重构（待 Runtime Evidence 收集后再实施）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| P2-1 | **Runtime Evidence Collection** | 收集 reload frequency（每小时/晚高峰 vs 白天）、average active-set lifetime、cooldown churn、freeze trigger rate、recovery oscillation、evening stability。当前真正缺的不是理论，而是 runtime evidence |
+| P2-2 | **ReloadCoordinator 统一 mutation authority** | 所有 mutation source 只提交 intent，Coordinator 统一 merge → debounce → schedule → apply。牵涉 FSM/freeze/UI mutation/manual override/debounce/reload budget/telemetry，需要充足 runtime data 后再设计 |
+| P2-3 | **Legacy 模块 IClock 统一迁移** | 将 `CooldownFsm`、`FailureCollector`、`ProbeService`、`BootstrapProber`、`ReloadPolicyApplier` 从直接 `DateTime.UtcNow` 迁移到注入 `IClock`，消除 dual-time-source（§17.3 已知风险） |
+
+> **v7.4 核心原则**：**停止加 feature，开始治理生命周期。** 当前 bottleneck 是 reload lifecycle，不是调度算法不够高级。
 
 ---
 
@@ -2556,6 +2620,171 @@ reload 频率低（< 4 次/小时正常环境）
 
 ---
 
+## 22. 外部评审：架构评估与生命周期治理方向
+
+> **v7.4 新增** | 日期：2026-05-23 | 评审方：OpenAI
+> **定位**：对 DeepSeek v7.4 综合分析的外部评审，聚焦于架构现实主义与 Production Stabilization Phase
+
+### 22.1 总体评估
+
+当前系统已经进入**"架构现实主义"阶段**而非"功能堆叠"阶段。DeepSeek 的分析同时覆盖了 architecture semantics、runtime constraints 和 actual code path，这是关键的进步。项目现在最需要的是**设计哲学与真实代码约束之间的闭环**。
+
+核心判断：**当前问题不是缺少机制，而是现有机制的"稳定性权重"不够高。**
+
+### 22.2 共同根源：Mutation Authority 碎片化
+
+频繁重启和 UI 配置重叠这两个问题，暴露出一个共同根源：
+
+```
+AdaptiveScheduler 已经开始侵入 v2rayN 原本的配置生命周期，
+但 mutation authority 还没有彻底统一。
+```
+
+**当前 mutation source 全景**（每个 source 独立触发 reload，彼此不知道对方存在）：
+
+| Mutation Source | 触发路径 | 是否感知其他 source |
+|-----------------|---------|-------------------|
+| Cooldown 进入/退出 | `FailureCollector` → `CooldownFsm` → `HasActiveSetChanged` → `OnActiveSetChangedAsync` → reload | ❌ 不知 ManualOverride、UI edit |
+| Recovery FSM 推进 | `MonitorActiveSetAsync` → recovery promoted → reload | ❌ 不知 freeze 状态 |
+| 手动清除 cooldown | UI 直接修改 `_cooldownUntil` → eligible 池变化 → reload | ❌ 绕过 Recovery FSM |
+| PolicyGroup 编辑 | UI 修改 `ProtocolExtra` → `SaveServerAsync` → 外部调用 `LoadCore` | ❌ 不知 adaptive 正在运行 |
+| Settings 修改 | `OptionSettingViewModel` → `Config.AdaptiveSchedulerItem` 变更 | ❌ 不知哪个 group 正在使用 |
+| GlobalFreeze | `FreezeController.Evaluate` → BlockMutation → reload skipped | ⚠️ freeze 期间 cooldown 仍在推进 (§11.8) |
+| ManualOverride | 用户手动切节点 → 锁定 5min | ⚠️ 优先级最高但无显式 authority transfer |
+
+**结论**：active-set mutation 本质上是 **routing topology mutation**。在 xray 缺少 runtime selector mutation API 的约束下，所有 active-set 变更 = config rewrite + xray restart。这不是算法问题，而是**runtime capability debt**。
+
+### 22.3 Config-Level State vs Runtime-Level State
+
+DeepSeek 诊断中最重要的架构区分：
+
+```
+cooldown 本质上应该是 "routing eligibility change"（运行时资格变更）
+但因为 xray 没有 runtime API，被迫用 "topology rebuild"（拓扑重建）来模拟
+→ 所有 eligibility change 都变成了 config rewrite + restart
+```
+
+**cooldown node 不应该是"真实配置删除"，而应该是 runtime logical exclusion**——真实 config 里 selector 包含所有节点，runtime 时 allowed active nodes 是子集。但 xray 当前做不到 runtime selector mutation，所以只能 config-level emulate runtime。这意味着 **reload unavoidable，但 reload frequency 可控**。
+
+### 22.4 DeepSeek P0/P1/P2 分层评估
+
+#### P0 — Semantic Correctness Repair ✅ 完全同意
+
+| 修改 | 评价 |
+|------|------|
+| `HasActiveSetChanged` 加 `HealthState` gate | **正确**。修 semantic correctness，阻止 RECOVERY_PROBING/STABILITY_VERIFICATION 节点进入 production selector。会立刻减少"无意义 reload" |
+| 手动清除 cooldown 走合法 FSM 路径 | **正确**。当前 bypass Recovery FSM 直接进入 active set，与 §10.7 非法状态迁移冲突。收益非常大 |
+
+#### P1 — Reload Aggressiveness Tuning ⚠️ 方向对，参数需谨慎
+
+| 修改 | 评价 |
+|------|------|
+| `NormalInterval` 15s → 30s | **方向对**。当前 runtime evidence 已出现高频 reload，15s baseline 过于响应性优先 |
+| `minUpdateIntervalMs` 10s → 30s | **方向对**。但必须区分变更 severity——catastrophic failure 应保持快速响应，normal cooldown 可以 batching |
+
+**关键警告**：debounce 本质是在交易"更少 reload"与"更慢 failure reaction"。**Reload suppression 不能变成 failure blindness**。建议：
+- 普通 cooldown（单个节点进/出）：允许 30-60s batching
+- 全节点故障（eligible 池为空）：立即 mutation，不等待 debounce
+- Freeze 期间：cooldown 入队但不 apply，等 freeze 解除后一次性评估
+
+#### P2 — ReloadCoordinator ✅ 方向正确，但不现在做
+
+Centralized mutation authority 是正确方向，但会牵涉 FSM、freeze、UI mutation、manual override、debounce、reload budget、telemetry — 现在立刻做 risk 太高。而且当前还缺 runtime telemetry data，不到做 full coordinator redesign 的时机。
+
+### 22.5 代码策略与文档哲学脱节
+
+**这是当前最重要的发现**。
+
+设计文档 v7.3 明确声明（§4.4）：
+
+```
+稳定性 > 响应性 > 最优性
+```
+
+但当前代码参数：
+
+| 参数 | 当前值 | 隐含哲学 |
+|------|--------|---------|
+| `minUpdateIntervalMs` | 10s | 响应性优先 |
+| `NormalInterval` | 15s | 响应性优先 |
+| `checkIntervalMs` | 5s | 响应性优先 |
+
+代码策略和文档哲学已经开始脱节——不是缺 feature，而是 **feature 参数隐含了错误的系统哲学**。这是 production-grade 系统最隐蔽的问题。
+
+### 22.6 Adaptive 不应降级为 Selector Type
+
+DeepSeek 的判断完全正确：
+
+- **UX 层面**：Adaptive 表现为 PolicyGroup 的一个 mode，与 Random/UrlTest/Fallback 并列 — 合理
+- **Architecture 层面**：AdaptiveScheduler 已经拥有 FSM、Freeze、Recovery、Telemetry、Debounce、Failure Attribution、DNS Cache — 这是 **control-plane subsystem**，不是 selector strategy
+- **禁止**：把 AdaptiveScheduler 硬塞进 `PolicyGroupType` 枚举。旧模式 `PolicyGroup + AdaptiveScheduler` 两个独立系统虽然不完美，但比强行合并 selector abstraction 更安全
+
+**UI 正确分层**：
+
+| 层级 | 归属 | 内容 |
+|------|------|------|
+| **Global 层** — Scheduler Runtime Engine | Settings > Adaptive | engine enable/disable, telemetry retention, log level, debug mode, experimental feature flags |
+| **Per-Group 层** — Adaptive Policy | PolicyGroup 编辑对话框 | enable adaptive, probe URL/interval/timeout, cooldown duration, recovery stages, freeze threshold, heavy probe fraction |
+
+### 22.7 下一步行动建议
+
+#### Phase 1 — 现在立刻（Semantic Correctness Repair）
+
+完成 DeepSeek P0：
+- `ActiveSetManager` 加 `HealthState` gate（阻止 RECOVERY_PROBING/STABILITY_VERIFICATION 进入 production selector）
+- 手动清除 cooldown 走合法 FSM 路径（FAILED → RECOVERY_PROBING）
+- 全 eligible 为空时的兜底逻辑调整（考虑 HealthState 非 ACTIVE 的节点）
+
+#### Phase 2 — 接下来（Reload Lifecycle Tuning + UI Cleanup）
+
+完成 DeepSeek P1：
+- `NormalInterval` 从 15s 延长到 30s
+- `minUpdateIntervalMs` 从 10s 延长到 30s
+- UI 合并：probe/cooldown/freeze 配置移到 PolicyGroup 对话框，Settings 仅保留 engine 开关和 telemetry/debug
+- 删除全局 `Enabled` 双重检查
+- 为 catastrophic failure（全 eligible 为空、freeze escalate）保留快速响应路径
+
+#### Phase 3 — 最重要（Runtime Evidence Collection）
+
+**不写新代码，先观察**。开始收集真实 runtime telemetry：
+
+- reload frequency（每小时、每天、晚高峰 vs 白天）
+- average active-set lifetime（stability 的核心指标）
+- cooldown churn（进入/退出频率和原因）
+- freeze trigger rate（全球冻结触发频率）
+- recovery oscillation（节点恢复后是否频繁再次失败）
+- evening stability（晚高峰时段的 active-set churn 是否明显升高）
+
+**当前真正缺的不是理论，而是 runtime evidence。**
+
+### 22.8 当前绝对禁止事项
+
+```
+禁止重写 scheduler
+禁止做 AI/RL score
+禁止做复杂 QoS inference
+禁止做 runtime IPC abstraction（xray 没有对应 API）
+禁止做 distributed authority graph
+禁止继续加 scheduler feature
+```
+
+**原因**：当前 bottleneck 已经非常明确是 **reload lifecycle**，不是调度算法不够高级。继续加 feature 只会增加 mutation source，加剧 lifecycle 失控。
+
+### 22.9 阶段转换信号
+
+**系统已经完成了从"功能实现"到"生命周期治理"的阶段转换。**
+
+| 旧阶段 | 新阶段 |
+|--------|--------|
+| 如何计算更准确的 score | 如何减少不必要的 reload |
+| 如何增加更多 mutation source | 如何统一 mutation authority |
+| 如何更快响应节点变化 | 如何更稳定地维持 active-set |
+| 功能堆叠 | 架构现实主义 |
+
+**现在最正确的方向不是"更聪明"，而是"更克制"。**
+
+---
+
 ## 附录 A：优先级总表
 
 | 级别 | # | 问题 | 影响 | 状态 |
@@ -2602,6 +2831,7 @@ reload 频率低（< 4 次/小时正常环境）
 | v7.1 | 2026-05-22 | CLAUDE-loadbalance.md | 10 项语义精炼：DNS Cache Confidence Lifecycle、Freeze Hysteresis、State Transition Invariants |
 | v7.2 | 2026-05-22 | CLAUDE-loadbalance.md | P0 代码实现：Recovery Confirmation FSM + Global Freeze Controller + 吞吐量三重禁止规则 |
 | **v7.3** | **2026-05-22** | **CLAUDE-loadbalance.md** | **P1#5/#7/#9 代码实现：DNS 归因分离 + 随机载荷探活 + DNS 缓存生命周期** |
+| **v7.4** | **2026-05-23** | **CLAUDE-loadbalance.md** | **OpenAI 外部评审：Mutation Authority 碎片化诊断、Reload Lifecycle 治理、P0/P1/P2 分层评估、代码策略与文档哲学脱节警示、Production Stabilization Phase 行动建议** |
 
 ### 合并说明
 

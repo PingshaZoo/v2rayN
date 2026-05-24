@@ -43,4 +43,15 @@ public record ProtocolExtraItem
     public string? Filter { get; init; }
     public EMultipleLoad? MultipleLoad { get; init; }
     public bool? AdaptiveEnabled { get; init; }
+
+    // Adaptive per-group probe settings (§15.1 Per-Group layer)
+    public string? AdaptiveProbeUrl { get; init; }
+    public int? AdaptiveProbeIntervalSec { get; init; }
+    public int? AdaptiveProbeTimeoutMs { get; init; }
+    public double? AdaptiveProbeHeavyFraction { get; init; }
+
+    // Adaptive per-group Production Pool sizing (§5.7)
+    public double? AdaptiveActiveFraction { get; init; }
+    public int? AdaptiveMinProductionNodes { get; init; }
+    public int? AdaptiveMaxProductionNodes { get; init; }
 }

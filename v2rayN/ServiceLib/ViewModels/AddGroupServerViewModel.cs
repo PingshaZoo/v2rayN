@@ -21,6 +21,27 @@ public class AddGroupServerViewModel : MyReactiveObject
     public bool AdaptiveEnabled { get; set; }
 
     [Reactive]
+    public string? AdaptiveProbeUrl { get; set; }
+
+    [Reactive]
+    public int AdaptiveProbeIntervalSec { get; set; }
+
+    [Reactive]
+    public int AdaptiveProbeTimeoutMs { get; set; }
+
+    [Reactive]
+    public double AdaptiveProbeHeavyFraction { get; set; }
+
+    [Reactive]
+    public double AdaptiveActiveFraction { get; set; }
+
+    [Reactive]
+    public int AdaptiveMinProductionNodes { get; set; }
+
+    [Reactive]
+    public int AdaptiveMaxProductionNodes { get; set; }
+
+    [Reactive]
     public bool IsPolicyGroupTypeEnabled { get; set; } = true;
 
     [Reactive]
@@ -103,6 +124,13 @@ public class AddGroupServerViewModel : MyReactiveObject
         };
 
         AdaptiveEnabled = protocolExtra?.AdaptiveEnabled ?? false;
+        AdaptiveProbeUrl = protocolExtra?.AdaptiveProbeUrl;
+        AdaptiveProbeIntervalSec = protocolExtra?.AdaptiveProbeIntervalSec ?? 30;
+        AdaptiveProbeTimeoutMs = protocolExtra?.AdaptiveProbeTimeoutMs ?? 5000;
+        AdaptiveProbeHeavyFraction = protocolExtra?.AdaptiveProbeHeavyFraction ?? 0.2;
+        AdaptiveActiveFraction = protocolExtra?.AdaptiveActiveFraction ?? 0.35;
+        AdaptiveMinProductionNodes = protocolExtra?.AdaptiveMinProductionNodes ?? 3;
+        AdaptiveMaxProductionNodes = protocolExtra?.AdaptiveMaxProductionNodes ?? 6;
 
         var subs = await AppManager.Instance.SubItems();
         subs.Add(new SubItem());
@@ -207,6 +235,13 @@ public class AddGroupServerViewModel : MyReactiveObject
             SubChildItems = SelectedSubItem?.Id,
             Filter = Filter,
             AdaptiveEnabled = AdaptiveEnabled,
+            AdaptiveProbeUrl = AdaptiveProbeUrl,
+            AdaptiveProbeIntervalSec = AdaptiveProbeIntervalSec,
+            AdaptiveProbeTimeoutMs = AdaptiveProbeTimeoutMs,
+            AdaptiveProbeHeavyFraction = AdaptiveProbeHeavyFraction,
+            AdaptiveActiveFraction = AdaptiveActiveFraction,
+            AdaptiveMinProductionNodes = AdaptiveMinProductionNodes,
+            AdaptiveMaxProductionNodes = AdaptiveMaxProductionNodes,
         };
     }
 

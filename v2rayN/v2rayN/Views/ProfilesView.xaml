@@ -364,17 +364,11 @@
                         </DataGridTextColumn.ElementStyle>
                     </base:MyDGTextColumn>
                     <base:MyDGTextColumn
-                        Width="50"
-                        Binding="{Binding AdaptiveCooldownVal}"
-                        ExName="AdaptiveCooldownVal"
-                        Header="Cooldown"
-                        SortMemberPath="AdaptiveCooldown" />
-                    <base:MyDGTextColumn
-                        Width="70"
-                        Binding="{Binding AdaptiveActiveVal}"
-                        ExName="AdaptiveActiveVal"
-                        Header="Active"
-                        SortMemberPath="AdaptiveActive" />
+                        Width="110"
+                        Binding="{Binding AdaptiveStatusVal}"
+                        ExName="AdaptiveStatusVal"
+                        Header="Adaptive Status"
+                        SortMemberPath="AdaptiveStatusVal" />
 
                     <base:MyDGTextColumn
                         x:Name="colTodayUp"

@@ -35,4 +35,9 @@ public class ProfileExItem
 
     /// <summary>UTC timestamp when STABILITY_VERIFICATION started. MinValue = not in verification.</summary>
     public DateTime AdaptiveStabilityVerificationStart { get; set; }
+
+    // ── P2: TrafficTier persistence (§5.7.8) ──
+
+    /// <summary>TrafficTier enum value (0=Production, 1=Standby). Persisted so tier assignment survives restarts.</summary>
+    public int AdaptiveTrafficTier { get; set; }
 }

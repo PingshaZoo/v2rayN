@@ -38,6 +38,12 @@ public sealed class RuntimePolicyApplier : IAdaptivePolicyApplier
         _fallback = fallback;
     }
 
+    public async Task ApplyImmediateAsync(AdaptiveConfig config, CancellationToken ct = default)
+    {
+        if (_disposed) return;
+        await _fallback.ApplyImmediateAsync(config, ct).ConfigureAwait(false);
+    }
+
     public async Task ApplyAsync(AdaptiveConfig config, CancellationToken ct = default)
     {
         if (_disposed) return;

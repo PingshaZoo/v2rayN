@@ -1,3 +1,4 @@
+using ServiceLib.Common;
 using ServiceLib.Models.Entities;
 using ServiceLib.Models.Configs;
 using ServiceLib.Models.CoreConfigs;
@@ -71,6 +72,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
     private Func<bool, string, Task>? _updateFunc;
     private AdaptiveSchedulerItem? _adaptiveItem;
+    private ProtocolExtraItem? _groupAdaptiveSettings;
     private const string _tag = "AdaptiveScheduler";
 
     private AdaptiveSchedulerManager()
@@ -108,7 +110,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         if (_activeSetManager == null) return null;
         return new AdaptiveConfig
         {
-            ActiveTags = _activeSetManager.GetActiveTags(),
+            ActiveTags = _activeSetManager.GetProductionTags(),
             CooldownTags = _activeSetManager.GetCooldownTags(),
             ProbePorts = _probePorts,
             NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score),
@@ -153,10 +155,16 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         _nodes = BuildNodeStates(groupNode, childNodes);
         _probePorts = AllocateProbePorts();
         _adaptiveItem = config.AdaptiveSchedulerItem;
+        _groupAdaptiveSettings = groupNode.GetProtocolExtra();
 
         _freezeController.Reset();
         _collector = new FailureCollector(_scorer, _cooldown, null, _freezeController);
-        _activeSetManager = new ActiveSetManager(_nodes);
+
+        var fraction = _groupAdaptiveSettings?.AdaptiveActiveFraction ?? ActiveSetManager.DefaultActiveFraction;
+        var minProd = _groupAdaptiveSettings?.AdaptiveMinProductionNodes ?? ActiveSetManager.DefaultMinProductionNodes;
+        var maxProd = _groupAdaptiveSettings?.AdaptiveMaxProductionNodes ?? ActiveSetManager.DefaultMaxProductionNodes;
+        Logging.SaveLog($"[Adaptive] InitializeNodes: nodeCount={_nodes.Count} perGroupFraction={_groupAdaptiveSettings?.AdaptiveActiveFraction} perGroupMin={_groupAdaptiveSettings?.AdaptiveMinProductionNodes} perGroupMax={_groupAdaptiveSettings?.AdaptiveMaxProductionNodes} effectiveFraction={fraction:F2} effectiveMin={minProd} effectiveMax={maxProd}");
+        _activeSetManager = new ActiveSetManager(_nodes, fraction, minProd, maxProd);
         _tagToIndexId = _nodes.ToDictionary(n => n.Tag, n => n.ChildIndexId);
         _nodesInitialized = true;
 
@@ -206,7 +214,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
         _scoreLogger.Start();
 
         _collector = new FailureCollector(_scorer, _cooldown, _scoreLogger, _freezeController);
-        _probeService = new ProbeService(_nodes, tag => _probePorts[tag], _collector, _adaptiveItem!, _recoveryFsm);
+        var probeConfig = BuildProbeConfig();
+        _probeService = new ProbeService(_nodes, tag => _probePorts[tag], _collector, probeConfig, _recoveryFsm);
         _probeService.Start();
 
         // Prime the change tracker with the current (post-bootstrap) top-K set
@@ -315,6 +324,12 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                 node.SetHealthState(healthState);
                 healthRestored++;
             }
+
+            // P2: Restore TrafficTier (0=Production, 1=Standby default → skip)
+            if (ex.AdaptiveTrafficTier == 0) // Production
+            {
+                node.SetTrafficTier(TrafficTier.Production);
+            }
         }
         if (restored > 0 || stale > 0 || healthRestored > 0)
             await _updateFunc!(false, $"[{_tag}] Restored scores: {restored} fresh, {stale} stale, {healthRestored} health FSM states out of {_nodes.Count} nodes.");
@@ -324,7 +339,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     {
         const int checkIntervalMs = 5000;
         DateTime lastUpdate = DateTime.MinValue;
-        const int minUpdateIntervalMs = 10_000;
+        const int minUpdateIntervalMs = 30_000;
 
         while (!ct.IsCancellationRequested)
         {
@@ -355,8 +370,11 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                 }
             }
 
-            // P0#1: Evaluate global freeze state before allowing any mutation
-            var activeTags = _activeSetManager.GetActiveTags();
+            // P2: Check for active-set changes first (computes production tags)
+            bool hasChanged = _activeSetManager.HasActiveSetChanged();
+
+            // P0#1: Evaluate global freeze state using the current production set
+            var activeTags = _activeSetManager.CurrentProductionTags;
             var freezeDecision = _freezeController.Evaluate(activeTags);
 
             switch (freezeDecision.Type)
@@ -394,14 +412,18 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                     continue;
             }
 
-            // Normal operation — check for active-set changes or recovery promotions
-            if (_activeSetManager.HasActiveSetChanged() || recoveryPromoted)
+            // Normal operation — reload if active-set changed or recovery promoted
+            if (hasChanged || recoveryPromoted)
             {
+                bool catastrophic = _activeSetManager.IsEligiblePoolEmpty;
                 var elapsed = (DateTime.UtcNow - lastUpdate).TotalMilliseconds;
-                if (elapsed >= minUpdateIntervalMs)
+                // Catastrophic (all eligible gone) MUST bypass minUpdateInterval (§6.4)
+                if (catastrophic || elapsed >= minUpdateIntervalMs)
                 {
+                    if (catastrophic)
+                        Logging.SaveLog($"[Adaptive] Monitor: CATASTROPHIC bypass — eligible pool empty, reloading immediately (elapsed={elapsed:F0}ms)");
                     lastUpdate = DateTime.UtcNow;
-                    await OnActiveSetChangedAsync();
+                    await OnActiveSetChangedAsync(catastrophic);
                 }
             }
         }
@@ -413,11 +435,11 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     /// and delegates to the policy applier. The <see cref="ReloadPolicyApplier"/>
     /// enforces a reload budget to prevent config thrashing.
     /// </summary>
-    private async Task OnActiveSetChangedAsync()
+    private async Task OnActiveSetChangedAsync(bool bypassDebounce = false)
     {
         if (_activeSetManager == null) return;
 
-        var active = _activeSetManager.GetActiveTags();
+        var active = _activeSetManager.GetProductionTags();
         var cooldown = _activeSetManager.GetCooldownTags();
 
         await _updateFunc!(false,
@@ -431,6 +453,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
             ["added"] = _activeSetManager.LastAdded,
             ["removed"] = _activeSetManager.LastRemoved,
             ["change_reasons"] = BuildChangeReasons(_activeSetManager.LastAdded, _activeSetManager.LastRemoved),
+            ["bypass_debounce"] = bypassDebounce,
         });
 
         var config = new AdaptiveConfig
@@ -446,11 +469,18 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
         if (_policyApplier != null)
         {
-            await _policyApplier.ApplyAsync(config);
+            if (bypassDebounce)
+            {
+                await _policyApplier.ApplyImmediateAsync(config);
+            }
+            else
+            {
+                await _policyApplier.ApplyAsync(config);
+            }
             _scoreLogger?.LogEvent("xray_reload", new Dictionary<string, object?>
             {
                 ["active_tags"] = active,
-                ["trigger"] = "active_set_change",
+                ["trigger"] = bypassDebounce ? "catastrophic_bypass" : "active_set_change",
             });
         }
     }
@@ -522,6 +552,24 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                 reasons[tag] = $"score_ranking: displaced from top-K at score={node.Score:F1}";
         }
         return reasons;
+    }
+
+    /// <summary>
+    /// Builds probe config by merging per-group settings (ProtocolExtra) with global defaults.
+    /// Per-group values override global AdaptiveSchedulerItem when explicitly set.
+    /// </summary>
+    private AdaptiveSchedulerItem BuildProbeConfig()
+    {
+        var global = _adaptiveItem ?? new AdaptiveSchedulerItem();
+        var group = _groupAdaptiveSettings;
+
+        return new AdaptiveSchedulerItem
+        {
+            Enabled = global.Enabled, // Global engine switch still gatekeeps
+            ProbeUrl = group?.AdaptiveProbeUrl ?? global.ProbeUrl,
+            ProbeIntervalSec = group?.AdaptiveProbeIntervalSec ?? global.ProbeIntervalSec,
+            ProbeTimeoutMs = group?.AdaptiveProbeTimeoutMs ?? global.ProbeTimeoutMs,
+        };
     }
 
     public async ValueTask DisposeAsync()

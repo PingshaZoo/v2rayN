@@ -55,8 +55,20 @@ public partial class AddGroupServerWindow : WindowBase<AddGroupServerViewModel>
             this.OneWayBind(ViewModel, vm => vm.IsPolicyGroupTypeEnabled, v => v.cmbPolicyGroupType.IsEnabled).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.AdaptiveEnabled, v => v.chkAdaptiveEnabled.IsChecked).DisposeWith(disposables);
             ViewModel!.WhenAnyValue(x => x.AdaptiveEnabled)
-                .Subscribe(a => txtAdaptiveHint.IsVisible = a)
+                .Subscribe(a =>
+                {
+                    txtAdaptiveHint.IsVisible = a;
+                    lblActiveFraction.IsVisible = a;
+                    txtActiveFraction.IsVisible = a;
+                    lblMinProduction.IsVisible = a;
+                    txtMinProductionNodes.IsVisible = a;
+                    lblMaxProduction.IsVisible = a;
+                    txtMaxProductionNodes.IsVisible = a;
+                })
                 .DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveActiveFraction, v => v.txtActiveFraction.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveMinProductionNodes, v => v.txtMinProductionNodes.Text).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.AdaptiveMaxProductionNodes, v => v.txtMaxProductionNodes.Text).DisposeWith(disposables);
             //this.OneWayBind(ViewModel, vm => vm.SubItems, v => v.cmbSubChildItems.ItemsSource).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.SelectedSubItem, v => v.cmbSubChildItems.SelectedItem).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.Filter, v => v.cmbFilter.Text).DisposeWith(disposables);

@@ -43,6 +43,12 @@ public class RuntimePolicyApplierTests
             return Task.CompletedTask;
         }
 
+        public Task ApplyImmediateAsync(AdaptiveConfig config, CancellationToken ct = default)
+        {
+            AppliedConfigs.Add(config);
+            return Task.CompletedTask;
+        }
+
         public ValueTask DisposeAsync()
         {
             Disposed = true;

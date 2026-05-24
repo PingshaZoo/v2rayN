@@ -135,13 +135,13 @@ public class BoundaryNodeCountTests
     [Fact]
     public void GetActiveTags_SingleNode_ReturnsItRegardlessOfScore()
     {
-        // 1 node with score=50 (below Entry=60) — should still be returned
+        // 1 node with score=50 (below Entry=60) — promoted via fallback (>= 35)
         var nodes = new List<NodeState> { CreateNode("A", score: 50) };
         var mgr = new ActiveSetManager(nodes);
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
 
         active.Should().ContainSingle().Which.Should().Be("A",
-            "single node always returned (eligible <= 2 early-return path)");
+            "single node promoted via fallback — score >= Exit=35");
     }
 
     [Fact]
@@ -152,22 +152,23 @@ public class BoundaryNodeCountTests
         // be empty, or xray has nothing to route through.
         var nodes = new List<NodeState> { CreateNode("A", score: 50, inCooldown: true) };
         var mgr = new ActiveSetManager(nodes);
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
 
         active.Should().ContainSingle().Which.Should().Be("A",
             "single cooldown node → only option, must be returned as fallback");
     }
 
     [Fact]
-    public void GetActiveTags_TwoNodes_BothReturned()
+    public void GetActiveTags_TwoNodes_OnlyHealthyEnterProduction()
     {
-        // 2 eligible nodes → both returned regardless of score (eligible <= 2 path)
+        // 2 eligible: A(80) >= 60 enters, B(30) < 35 excluded.
+        // Pool runs below target when insufficient qualified nodes exist.
         var nodes = new List<NodeState> { CreateNode("A", score: 80), CreateNode("B", score: 30) };
         var mgr = new ActiveSetManager(nodes);
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
 
-        active.Count.Should().Be(2);
-        active.Should().Contain(new[] { "A", "B" });
+        active.Should().Contain("A", "A at score=80 enters production");
+        active.Should().NotContain("B", "B at score=30 < Exit=35 excluded from production");
     }
 
     [Fact]
@@ -181,14 +182,14 @@ public class BoundaryNodeCountTests
         var mgr = new ActiveSetManager(nodes);
 
         // B in cooldown → only A is eligible → eligible.Count=1 → early return
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
         active.Should().ContainSingle().Which.Should().Be("A");
     }
 
     [Fact]
-    public void GetActiveTags_ThreeNodes_NormalHysteresisApplies()
+    public void GetActiveTags_ThreeNodes_HysteresisApplies()
     {
-        // N=3: topK = max(2, ceil(3*2/3)) = 2
+        // N=3: target = clamp(ceil(3*0.35), 3, 6) = 3
         var nodes = new List<NodeState>
         {
             CreateNode("A", score: 80),
@@ -196,12 +197,12 @@ public class BoundaryNodeCountTests
             CreateNode("C", score: 30),
         };
         var mgr = new ActiveSetManager(nodes);
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
 
-        // A and B >= 60 enter sticky. C at 30 < 35 can't even be explorer.
+        // A and B >= 60 enter. C at 30 < 35 excluded (below Exit).
         active.Should().Contain("A");
         active.Should().Contain("B");
-        active.Should().NotContain("C", "C at 30 < Exit=35, not eligible for explorer");
+        active.Should().NotContain("C", "C at 30 < Exit=35, not eligible for production");
     }
 
     // ── All-nodes-cooldown fallback (§8.1 criterion 1) ─────────
@@ -221,7 +222,7 @@ public class BoundaryNodeCountTests
         nodes[2].SetCooldown(now.AddMinutes(10));
 
         var mgr = new ActiveSetManager(nodes);
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
 
         active.Should().ContainSingle().Which.Should().Be("B",
             "B has the shortest remaining cooldown (2 min) — best recovery candidate");
@@ -239,7 +240,7 @@ public class BoundaryNodeCountTests
         }
 
         var mgr = new ActiveSetManager(nodes);
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
 
         // Must return at least one node — N0 has shortest cooldown (1 min)
         active.Should().NotBeEmpty("balancer must never have an empty selector");
@@ -259,7 +260,7 @@ public class BoundaryNodeCountTests
         nodes[1].SetCooldown(now.AddMinutes(3));
 
         var mgr = new ActiveSetManager(nodes);
-        var active = mgr.GetActiveTags();
+        var active = mgr.GetProductionTags();
 
         active.Should().ContainSingle();
         active[0].Should().BeOneOf(["A", "B"],

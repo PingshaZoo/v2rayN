@@ -381,16 +381,19 @@ public class ProfilesViewModel : MyReactiveObject
             item.AdaptiveLatency = (int)Math.Round(node.EwmaLatencyMs);
             item.AdaptiveLatencyVal = $"{node.EwmaLatencyMs:F0} ms";
             item.AdaptiveCooldown = node.IsInCooldown;
-            item.AdaptiveCooldownVal = node.IsInCooldown ? "Yes" : string.Empty;
             item.AdaptiveActive = isActive;
-            item.AdaptiveActiveVal = isActive ? "Active" : string.Empty;
+            item.AdaptiveStatusVal = node.IsInCooldown ? "Cooldown"
+                : node.HealthState != NodeHealthState.Active ? node.HealthState.ToString()
+                : node.TrafficTier == TrafficTier.Production ? "Production"
+                : "Standby";
 
             ProfileExManager.Instance.SetAdaptiveData(
                 childIndexId,
                 (int)Math.Round(node.Score),
                 (int)Math.Round(node.EwmaLatencyMs),
                 node.IsInCooldown,
-                isActive);
+                isActive,
+                (int)node.TrafficTier);
         }
         await Task.CompletedTask;
     }
@@ -509,9 +512,9 @@ public class ProfilesViewModel : MyReactiveObject
                         AdaptiveLatency = t33?.AdaptiveLatency ?? 0,
                         AdaptiveLatencyVal = t33?.AdaptiveLatency > 0 ? $"{t33.AdaptiveLatency} ms" : string.Empty,
                         AdaptiveCooldown = (t33?.AdaptiveCooldown ?? 0) != 0,
-                        AdaptiveCooldownVal = (t33?.AdaptiveCooldown ?? 0) != 0 ? "Yes" : string.Empty,
                         AdaptiveActive = (t33?.AdaptiveActive ?? 0) != 0,
-                        AdaptiveActiveVal = (t33?.AdaptiveActive ?? 0) != 0 ? "Active" : string.Empty,
+                        AdaptiveStatusVal = (t33?.AdaptiveCooldown ?? 0) != 0 ? "Cooldown"
+                            : (t33?.AdaptiveActive ?? 0) != 0 ? "Active" : string.Empty,
                     }).OrderBy(t => t.Sort).ToList();
 
         return lstModel;

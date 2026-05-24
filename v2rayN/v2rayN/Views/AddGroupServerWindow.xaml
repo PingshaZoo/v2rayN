@@ -137,23 +137,110 @@
                     Grid.Column="0"
                     Grid.ColumnSpan="3"
                     Margin="{StaticResource Margin4}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <CheckBox
                         x:Name="chkAdaptiveEnabled"
+                        Grid.Row="0"
                         Grid.Column="0"
                         VerticalAlignment="Center"
                         Content="Adaptive Scheduling" />
                     <TextBlock
                         x:Name="txtAdaptiveHint"
+                        Grid.Row="0"
                         Grid.Column="1"
                         Margin="{StaticResource MarginLeftRight8}"
                         VerticalAlignment="Center"
                         Text="C# adaptive control plane active — PolicyGroupType is overridden. Disable above to restore."
                         TextWrapping="Wrap"
                         Visibility="Collapsed" />
+                    <!-- Production Pool sizing (row 1-3) -->
+                    <StackPanel
+                        Grid.Row="1"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="2"
+                        Margin="{StaticResource Margin4}"
+                        Orientation="Horizontal">
+                        <TextBlock
+                            x:Name="lblActiveFraction"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="Prod Fraction"
+                            Visibility="Visible" />
+                        <TextBox
+                            x:Name="txtActiveFraction"
+                            Width="50"
+                            Margin="{StaticResource MarginLeftRight8}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource DefTextBox}"
+                            Visibility="Visible" />
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="Target pool size = ceil(N × fraction), clamped by min/max below. Default 0.35 = top 35% of eligible nodes."
+                            Foreground="Gray"
+                            Visibility="Visible" />
+                    </StackPanel>
+                    <StackPanel
+                        Grid.Row="2"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="2"
+                        Margin="{StaticResource Margin4}"
+                        Orientation="Horizontal">
+                        <TextBlock
+                            x:Name="lblMinProduction"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="Min Prod"
+                            Visibility="Visible" />
+                        <TextBox
+                            x:Name="txtMinProductionNodes"
+                            Width="50"
+                            Margin="{StaticResource MarginLeftRight8}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource DefTextBox}"
+                            Visibility="Visible" />
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="Floor — small node pools use all eligible nodes. Default 3."
+                            Foreground="Gray"
+                            Visibility="Visible" />
+                    </StackPanel>
+                    <StackPanel
+                        Grid.Row="3"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="2"
+                        Margin="{StaticResource Margin4}"
+                        Orientation="Horizontal">
+                        <TextBlock
+                            x:Name="lblMaxProduction"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="Max Prod"
+                            Visibility="Visible" />
+                        <TextBox
+                            x:Name="txtMaxProductionNodes"
+                            Width="50"
+                            Margin="{StaticResource MarginLeftRight8}"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource DefTextBox}"
+                            Visibility="Visible" />
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            Style="{StaticResource ToolbarTextBlock}"
+                            Text="Hard cap — limits exposure surface. Default 6."
+                            Foreground="Gray"
+                            Visibility="Visible" />
+                    </StackPanel>
                 </Grid>
             </Grid>
         </Grid>

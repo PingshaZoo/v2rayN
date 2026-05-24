@@ -9,7 +9,14 @@ namespace ServiceLib.Handler.AdaptiveNodeScheduler;
 public interface IAdaptivePolicyApplier : IAsyncDisposable
 {
     /// <summary>
-    /// Apply the given adaptive config. Called when the active set changes meaningfully.
+    /// Apply the given adaptive config with debounce. Called when the active set
+    /// changes meaningfully under normal conditions.
     /// </summary>
     Task ApplyAsync(AdaptiveConfig config, CancellationToken ct = default);
+
+    /// <summary>
+    /// Apply the given adaptive config immediately, bypassing any debounce window.
+    /// Used for catastrophic scenarios (e.g., all eligible nodes disappeared).
+    /// </summary>
+    Task ApplyImmediateAsync(AdaptiveConfig config, CancellationToken ct = default);
 }
