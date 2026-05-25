@@ -31,6 +31,8 @@ public sealed class ActiveSetManager
     public const double EntryThreshold = 60.0;
     /// <summary>Score must drop below this to be demoted from Production to Standby.</summary>
     public const double ExitThreshold = 35.0;
+    /// <summary>Minimum score for fallback promotion (buffer above Exit to prevent immediate re-demotion).</summary>
+    public const double FallbackPromotionThreshold = 48.0;
 
     /// <summary>Default fraction of eligible nodes targeted for Production pool.</summary>
     public const double DefaultActiveFraction = 0.35;
@@ -175,7 +177,7 @@ public sealed class ActiveSetManager
             {
                 promoteFallback = standby
                     .Except(promoteStandard)
-                    .Where(n => n.Score >= ExitThreshold)
+                    .Where(n => n.Score >= FallbackPromotionThreshold)
                     .OrderByDescending(n => n.Score)
                     .Take(stillShort)
                     .ToList();
@@ -293,7 +295,7 @@ public sealed class ActiveSetManager
             foreach (var p in t.StandardPromotedTags)
                 Logging.SaveLog($"[Adaptive] ProductionPool PROMOTE(standard>=Entry={EntryThreshold}): {p}");
             foreach (var p in t.FallbackPromotedTags)
-                Logging.SaveLog($"[Adaptive] ProductionPool PROMOTE(fallback>=Exit={ExitThreshold}): {p}");
+                Logging.SaveLog($"[Adaptive] ProductionPool PROMOTE(fallback>={FallbackPromotionThreshold}): {p}");
             return true;
         }
     }

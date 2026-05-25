@@ -1,6 +1,6 @@
 # Adaptive Node Scheduler — Core Specification
 
-**版本**: 1.2（2026-05-24 — §5.7 Bounded Production Pool + TrafficTier, §5.3 Top-K→TargetProductionSize, §18 Production/Standby invariants）
+**版本**: 1.3（2026-05-25 — §5.1 Anti-Churn: Adaptive Exit + Fallback Repair + MinTenure + ReloadCooldown）
 **系统正式名称**: **Conservative Production Admission System**
 **定位**: Conservative Production Admission System（机制层：Bounded Production Pool + Failure-Driven Promotion）
 **核心收益来源**: 压缩 production surface area，减少错误调度，而非提高调度精度或寻找最快节点
@@ -98,6 +98,10 @@
 | Cooldown Jitter（FNV-1a hash） | 防止群体同步恢复 | 确定性偏移，每个节点恢复时间点永不相同 |
 | Throughput Anomaly | 检测高分低吞吐 | 仅 observer，不入 score，不入 active-set gate |
 | Vacancy-Driven Promotion | 仅在 Production 出现空缺时晋升，不做 score 比较替换 | 消除 score-driven replacement 的 oscillation 风险 |
+| Adaptive Exit（v1.3） | `max(25, min(35, median-15))` — 环境自适应 failure sensitivity | 降低整体退化时的误淘汰 |
+| Fallback Repair（v1.3） | 空缺修复门槛从 35→48，仅 degraded mode 启用 | 防止"一进就出" |
+| MinTenure 3 档（v1.3） | 新晋升节点 tenure 基于 runningScore 分 3 档（30s/120s/300s） | 时间维度防抖，runningScore 可信度越高越粘 |
+| ReloadCooldown 60s（v1.3） | 全局 mutation rate limiter | 硬兜底，保证 reload 频率上限 |
 
 ### 1.4 统一目标函数
 
@@ -306,20 +310,91 @@ RECOVERY_PROBING 和 STABILITY_VERIFICATION 节点仅接收 probe traffic，不�
 
 ## 5. Active Set Lifecycle
 
-### 5.1 Hysteresis 迟滞机制
+### 5.1 Admission & Exit 门槛
+
+#### 5.1.1 Normal Admission（正常晋升）
 
 ```
-进入 active set 门槛 (Entry): score ≥ 60  // 新节点需较高分数
-退出 active set 门槛 (Exit):  score < 35   // 已在集合中需大幅下降才退出
-缓冲带: 25 分                                // 防止 score 震荡导致频繁 xray reload
+EntryThreshold = 60
+语义: "优秀准入"——节点足够优秀，值得进入 production
+触发: Standby score ≥ 60，且存在 vacancy（vacancy-driven only）
 ```
 
-### 5.2 两阶段评估
+#### 5.1.2 Fallback Repair（空缺修复）
 
-1. **Sticky 保护**：已在 active set 中的节点，只要 score ≥ ExitThreshold(35) 就保留
-2. **Entry 门槛**：不在 active set 中的节点，需 score ≥ EntryThreshold(60) 才能进入 candidates
-3. **Top-K 填充**：sticky 节点优先（按 score 降序），剩余空位用 candidates 填充
-4. **安全底线**：若 sticky + candidates 均为空，回退到全节点按 score 降序选 top-K
+```
+FallbackPromotionThreshold = 48
+语义: "够用修复"——Production pool 已损坏（有 vacancy 但无 score≥60 的 Standby），
+      允许"够用"而非"优秀"。仅用于 topology repair，不是 normal admission。
+触发: 有 vacancy 但无 score ≥ 60 的 Standby 可用
+```
+
+> 为什么是 48 而不是 60？Vacancy repair 属于 degraded mode。48 提供 13 分缓冲（高于 Exit=35），防止"一进就出"。
+> FallbackPromotionThreshold 不改变节点正常 admission 资格，仅用于 vacancy repair。
+
+#### 5.1.3 Adaptive Exit（环境自适应淘汰）
+
+```
+EffectiveExitThreshold = max(FloorExit, min(ConfiguredExit, ProductionMedian - DynamicMargin))
+参数: ConfiguredExit = 35, DynamicMargin = 15, FloorExit = 25
+语义: Environment-adaptive failure sensitivity——仍然是 absolute failure semantics，
+      不是 relative competition。"节点自己是否 failure"，不是"节点是否比别的节点差"。
+```
+
+| Production Scores | Median | EffectiveExit | 含义 |
+|-------------------|--------|---------------|------|
+| 95,92,88,86,84,80 | 87 | max(25, min(35, 72)) = **35** | 高质量环境，正常 sensitivity |
+| 55,52,50,48,46,44 | 49 | max(25, min(35, 34)) = **34** | 整体退化，自动降低 sensitivity |
+| 30,28,26,25,24,22 | 25.5 | max(25, min(35, 10.5)) = **25** | 极差环境，触 floor 保护 |
+
+> Floor=25 是 absolute minimum survivability——防止极差环境下 Exit 塌到 15 导致永不 eject。
+
+#### 5.1.4 MinTenure（时间门槛）
+
+离散 3 档（非连续函数），依据节点在 Production 中的 runningScore（真实流量 EWMA，非探针分数）：
+
+| runningScore | MinTenure | 语义 |
+|-------------|-----------|------|
+| >= 55 | 300s (5min) | 稳定节点，高粘性 |
+| >= 40 | 120s (2min) | 中等节点，给时间证明 |
+| < 40 | 30s | 边缘节点，允许快速纠错 |
+
+> 为什么不用连续函数？系统已有 EWMA、score、hysteresis、debounce、freeze、cooldown、recovery FSM 等多层动态系统。Tenure 必须保持低维、离散、可解释。
+> 为什么用 runningScore 而非 promotionScore？探针分数是小样本测试请求，运行分数是真实代理流量——可信度不在一个量级。
+
+#### 5.1.5 ReloadCooldown（频率硬地板）
+
+```
+ReloadCooldown = 60s
+语义: Global mutation rate limiter。不管什么原因，两次 reload 至少隔 60 秒。
+      xray reload = 用户连接中断，是当前系统最大的真实 UX 成本。
+```
+
+#### 5.1.6 机制关系：AND 串联门
+
+```
+Reload 执行 =
+    Production Set 实际发生了变化
+    AND ReloadCooldown 已过期 (60s)
+
+节点降级 =
+    score < EffectiveExitThreshold
+    AND MinTenure 已过期
+
+Vacancy 填补 =
+    选 Standby 中 score >= FallbackPromotionThreshold(48) 的节点按分数降序补位
+```
+
+所有机制为 AND 关系，每一层只控制一个维度，不互相争夺 topology authority。
+
+### 5.2 多阶段评估
+
+1. **Sticky 保护**：已在 Production 中的节点，只要 score >= EffectiveExitThreshold 且 MinTenure 未过期就保留
+2. **Normal Admission**：不在 Production 中的节点，需 score ≥ EntryThreshold(60) 才能进入 candidates
+3. **Fallback Repair**：若 candidates 不足填补 vacancy，允许 score ≥ FallbackPromotionThreshold(48) 的 Standby 临时补位
+4. **Vacancy 填充**：sticky 节点优先（按 score 降序），剩余空位用 candidates 填充，再不足用 fallback 填充
+5. **安全底线**：若 sticky + candidates + fallback 均为空，回退到全节点按 score 降序选 top-K
+6. **ReloadCooldown 检查**：Production Set 变化后，检查距离上次 reload 是否 ≥ 60s，否则推迟
 
 ### 5.3 TargetProductionSize 公式
 
@@ -356,11 +431,12 @@ Production Pool 是 **bounded elastic** 而非固定大小——节点少时全�
 
 ### 5.5 Explorer 隔离（P2: 已纳入 Standby Pool）
 
-Explorer 是 Standby Pool 的子集：score 在 [35, 60) 的 Standby 节点。
+Explorer 是 Standby Pool 的子集：score 在 [48, 60) 的 Standby 节点。
 
 Explorer MUST 仅接收 probe traffic + telemetry + passive evaluation。
-Explorer MUST NOT 进入 production selector。
-Explorer MUST 稳定超过 EntryThreshold(60) 后才能成为 Standby 晋升候选。
+Explorer MUST NOT 进入 production selector（正常晋升）。
+Explorer 可在 Fallback Repair（§5.1.2）时临时补位——vacancy 存在且无 score≥60 的 Standby。
+Explorer MUST 稳定超过 EntryThreshold(60) 后才能通过 Normal Admission 晋升。
 Explorer 语义完全保留于 Standby Pool 框架内。
 
 ### 5.6 启动序列
@@ -403,9 +479,18 @@ eligible nodes (HealthState=Active, !IsInCooldown)
 
 #### 5.7.3 Production Pool Membership
 
-**进入（Promotion）**：仅当 `ProductionCount < TargetProductionSize`（出现 vacancy）时触发。从 Standby 中选择 `HealthState == Active && Score >= EntryThreshold(60)` 的节点，按 score 降序补位。一次 reload 可晋升多个 Standby（合并 debounce 窗口内的多个 vacancy）。
+**进入（Promotion）**：仅当 `ProductionCount < TargetProductionSize`（出现 vacancy）时触发。
 
-**离开（Demotion）**：仅以下条件触发（与当前 active-set 离开规则完全一致）：
+1. **Normal Admission**：从 Standby 中选择 `HealthState == Active && Score >= EntryThreshold(60)` 的节点，按 score 降序补位。
+2. **Fallback Repair**：若无 score≥60 的 Standby，放宽至 `Score >= FallbackPromotionThreshold(48)` 临时补位。语义为 degraded mode repair——Production pool 已损坏，允许"够用"而非"优秀"。
+3. 一次 reload 可晋升多个 Standby（合并 debounce 窗口内的多个 vacancy）。
+
+**离开（Demotion）**：仅以下条件触发，**所有条件为 AND 关系**：
+
+- `Score < EffectiveExitThreshold`（见 §5.1.3）——环境自适应 failure 判断
+- `MinTenure 已过期`（见 §5.1.4）——时间门槛，防止新晋升节点立即被淘汰
+- `进入 cooldown`（consecutiveFailures ≥ 2）
+- `HealthState != Active`（进入 Recovery FSM）
 - `Score < ExitThreshold(35)` 且不在 sticky 保护期
 - 进入 cooldown（consecutiveFailures ≥ 2）
 - `HealthState != Active`（进入 Recovery FSM）
@@ -422,7 +507,7 @@ Standby 行为：
 - 持续 cooldown FSM / recovery FSM（完整状态机保护）
 - **score 仅用于 Standby 内部排序**——决定 vacancy 出现时谁先晋升
 
-**Explorer 子集**：Standby 中 score 在 [35, 60) 的节点仍为 Explorer——有资格留在 Standby 但不满足晋升门槛。Explorer 语义完全保留。
+**Explorer 子集**：Standby 中 score 在 [48, 60) 的节点仍为 Explorer——有资格留在 Standby 但不满足正常晋升门槛（可在 Fallback Repair 时补位）。Explorer 语义完全保留。
 
 #### 5.7.5 TrafficTier — 与 HealthState 正交
 
@@ -453,9 +538,9 @@ TrafficTier **只影响 selector membership**，不影响 cooldown FSM、recover
 #### 5.7.7 Standby 不足时的 Fallback
 
 当 `eligible Standby (score ≥ 60) < vacancy count` 时，放宽晋升条件：
-1. 优先晋升 score ≥ 60 的 Standby（标准路径）
-2. 仍不足时，允许 score ≥ ExitThreshold(35) 的 Standby 临时补位
-3. 临时补位节点标记为 Production，但下次 vacancy 填补时优先替换（让真正 ≥60 的节点进入）
+1. 优先晋升 score ≥ 60 的 Standby（Normal Admission）
+2. 仍不足时，允许 score ≥ FallbackPromotionThreshold(48) 的 Standby 临时补位（Fallback Repair，degraded mode）
+3. Fallback 仅用于 topology repair，不改变节点正常 admission 资格
 4. 极端情况（全 eligible 为空）沿用现有 fallback：RECOVERY_PROBING > STABILITY_VERIFICATION > cooldown
 
 **Invariant**：Production Pool 永不为空（延续 Invariant I1）。
@@ -1054,4 +1139,16 @@ public async Task EmergencyDisableAdaptiveAsync()
 |---|-----------|---------|
 | IX1 | **Production and Standby EWMA MUST NOT be directly compared** | 代码层面：Production 与 Standby 使用相同的 `ScoreCalculator`，但 score 比较仅在 Standby 池内进行（晋升排序） |
 | IX2 | **TrafficTier MUST be persisted across restarts** | `ProfileExItem` MUST 存储 TrafficTier。重启后 MUST 恢复，防止所有 Standby 误入 Production |
-| IX3 | **Standby 临时补位 MUST be marked for replacement** | 当 score ≥ 60 的 Standby 不足时，放宽至 ≥ 35 的临时补位节点 MUST 标记，下一次 vacancy 填补时优先替换 |
+| IX3 | **Standby 临时补位 MUST be marked for replacement** | 当 score ≥ 60 的 Standby 不足时，放宽至 ≥ 48 的临时补位节点 MUST 标记（Fallback Repair），下一次 vacancy 填补时优先替换 |
+
+### X. Anti-Churn Integrity（v7.6 新增）
+
+| # | Invariant | 验证方式 |
+|---|-----------|---------|
+| X1 | **Production 节点只因 explicit failure 离开** | 离开条件：score < EffectiveExit + MinTenure 过期 + cooldown + HealthState != Active。MUST NOT 因 relative competition 离开 |
+| X2 | **Promotion 仅 vacancy-driven** | 仅当 ProductionCount < TargetProductionSize。MUST NOT 因 Standby 分数更高触发 |
+| X3 | **Standby score 与 Production score 不直接比较决定替换** | 禁止 score-driven replacement（延续 VIII3, VIII5） |
+| X4 | **EffectiveExit 始终有 floor（25）** | `max(25, min(35, median - 15))` — 防止极差环境下永不 eject |
+| X5 | **MinTenure 保持离散 3 档** | 不引入连续自适应函数，保持可解释性 |
+| X6 | **ReloadCooldown 全局强制（60s）** | 两次 reload 至少隔 60 秒。Catastrophic bypass（全 eligible 为空）除外 |
+| X7 | **多机制 AND 关系，不互相争夺 topology authority** | 每层只控制一个维度：Entry=admission, Fallback=repair, Exit=failure sensitivity, Tenure=time gate, Cooldown=rate limiting |

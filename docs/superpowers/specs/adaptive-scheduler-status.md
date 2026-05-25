@@ -1,6 +1,6 @@
 # Adaptive Node Scheduler — Engineering Status
 
-**日期**: 2026-05-24 | **对应 Spec 版本**: 1.2
+**日期**: 2026-05-25 | **对应 Spec 版本**: 1.3
 
 ---
 
@@ -18,6 +18,7 @@
 | **P0（v7.4）** | ✅ 完成 (2026-05-23) | HealthState gate + FSM 合法路径 + 兜底逻辑 |
 | **P1（v7.4）** | ✅ 完成 (2026-05-23) | Reload 基线延长 + UI 合并 + 全局开关删除 + severity 分级 |
 | **P2（v7.5）** | ✅ 完成 (2026-05-24) | Bounded Production Pool + Failure-Driven Promotion（UI 配置/P2a-c 子任务待后续） |
+| **Anti-Churn（v7.6）** | 📋 设计定稿 (2026-05-25) | Adaptive Exit + Fallback Repair + MinTenure + ReloadCooldown |
 
 ---
 
@@ -77,6 +78,40 @@
 | Recovery nodes | → 不变（仍不入 production） |
 | Cooldown nodes | → 不变（仍不入 production） |
 
+---
+
+## v7.6 Anti-Churn — 设计定稿 (2026-05-25)
+
+### 问题
+
+60 节点环境下 Production pool 频繁 reload——固定 Exit=35 在分数聚类时形成"悬崖边"，Fallback promotion 也用 35，新晋升节点零缓冲。
+
+### 设计方向：四层防抖，AND 串联，保持 failure-driven demotion
+
+| # | 变更 | 状态 | 涉及文件 |
+|---|------|------|---------|
+| AF-1 | FallbackPromotionThreshold 35→48 | 📋 待实施 | `ActiveSetManager.cs` |
+| AF-2 | Adaptive Exit: `max(25, min(35, median-15))` | 📋 待实施 | `ActiveSetManager.cs` |
+| AF-3 | MinTenure 3 档（30s/120s/300s），基于 runningScore | 📋 待实施 | `ActiveSetManager.cs`, `NodeState.cs` |
+| AF-4 | ReloadCooldown 60s hard floor | 📋 待实施 | `AdaptiveSchedulerManager.cs` |
+
+**关键设计决策**：
+
+- ✅ 保持 failure-driven demotion — Production 节点只因 explicit failure 离开
+- ✅ 保持 vacancy-driven promotion — 不因 Standby 分数更高触发替换
+- ✅ Adaptive Exit 是 environment-adaptive failure sensitivity，不是 relative competition
+- ❌ 不做 rank-based sticky — 本质是 score-driven replacement
+- ❌ 不做 continuous MinTenure — 保持离散 3 档，可解释
+- ❌ Production 与 Standby score 不直接比较
+
+**语义区分**：
+
+| 常量 | 值 | 语义 |
+|------|-----|------|
+| EntryThreshold | 60 | Normal Admission — "优秀准入" |
+| FallbackPromotionThreshold | 48 | Fallback Repair — "够用修复"（degraded mode） |
+| EffectiveExitThreshold | max(25, min(35, median-15)) | Adaptive Exit — "环境自适应 failure sensitivity" |
+
 ### 子任务（从原 P2 降级）
 
 | # | 任务 | 状态 |
@@ -130,11 +165,11 @@
 
 | 模块 | 文件 | 版本 |
 |------|------|------|
-| `AdaptiveSchedulerManager` | `Handler/AdaptiveNodeScheduler/AdaptiveSchedulerManager.cs` | v7.5 (per-group config, catastrophic bypass, TrafficTier persistence) |
+| `AdaptiveSchedulerManager` | `Handler/AdaptiveNodeScheduler/AdaptiveSchedulerManager.cs` | v7.6 (v7.5 + ReloadCooldown 60s) |
 | `ScoreCalculator` | `Handler/AdaptiveNodeScheduler/ScoreCalculator.cs` | v7.0 |
 | `FailureCollector` | `Handler/AdaptiveNodeScheduler/FailureCollector.cs` | v7.3 |
 | `CooldownFsm` | `Handler/AdaptiveNodeScheduler/CooldownFsm.cs` | v7.1 |
-| `ActiveSetManager` | `Handler/AdaptiveNodeScheduler/ActiveSetManager.cs` | v7.5 (Bounded Production Pool + per-group configurable sizing + TrafficTier gate + vacancy-driven promotion) |
+| `ActiveSetManager` | `Handler/AdaptiveNodeScheduler/ActiveSetManager.cs` | v7.6 (v7.5 + FallbackRepair + AdaptiveExit + MinTenure) |
 | `BootstrapProber` | `Handler/AdaptiveNodeScheduler/BootstrapProber.cs` | v7.3 |
 | `ProbeService` | `Handler/AdaptiveNodeScheduler/ProbeService.cs` | v7.3 |
 | `ScoreLogger` | `Handler/AdaptiveNodeScheduler/ScoreLogger.cs` | v7.1 |
@@ -163,6 +198,9 @@
 | ~~手动清除 cooldown / Recovery 节点入 production~~ | v7.4 HealthState gate 已修复 | — |
 | ~~Reload responsiveness 过度激进~~ | v7.4 P1 延长至 30s | — |
 | ~~全 eligible 为空时 debounce 延迟 reload~~ | v7.4 P1 ApplyImmediateAsync 已添加 | — |
+| 60+ 节点下固定 Exit=35 导致 churn | 大量节点 hovering around 35，一次慢探测触发 demotion→promotion→reload 链 | v7.6 Adaptive Exit + Fallback Repair + MinTenure + ReloadCooldown 四层防抖 |
+| EffectiveExit floor 可能过高（25）或过低 | Floor=25 是理论值，实际效果需 runtime 验证 | Runtime telemetry 观测 EffectiveExit 实际取值分布 |
+| MinTenure 3 档的阈值（55/40）未经数据校准 | runningScore 分布在不同网络环境下可能差异很大 | Runtime telemetry 观测 runningScore 分布，必要时调整阈值 |
 
 ---
 
