@@ -73,6 +73,8 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     private Func<bool, string, Task>? _updateFunc;
     private AdaptiveSchedulerItem? _adaptiveItem;
     private ProtocolExtraItem? _groupAdaptiveSettings;
+    /// <summary>v7.6 ReloadCooldown hard floor — minimum interval between xray reloads (§5.1.5).</summary>
+    public const int ReloadCooldownMs = 60_000;
     private const string _tag = "AdaptiveScheduler";
 
     private AdaptiveSchedulerManager()
@@ -339,7 +341,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     {
         const int checkIntervalMs = 5000;
         DateTime lastUpdate = DateTime.MinValue;
-        const int minUpdateIntervalMs = 30_000;
+        const int minUpdateIntervalMs = ReloadCooldownMs; // v7.6: 60s hard floor (§5.1.5)
 
         while (!ct.IsCancellationRequested)
         {

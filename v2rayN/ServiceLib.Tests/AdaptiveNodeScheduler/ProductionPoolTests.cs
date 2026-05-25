@@ -180,12 +180,13 @@ public class ProductionPoolTests
         var mgr = new ActiveSetManager(nodes);
         mgr.GetProductionTags(); // promotes A,B,C
 
-        // A drops to 30 — below Exit=35, must be demoted
+        // A drops to 30 — below EffectiveExit. Simulate A promoted 5min ago (MinTenure expired).
         nodes[0].UpdateScore(100, 0.0, 30, 0);
+        nodes[0].OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
         var production = mgr.GetProductionTags();
 
         production.Should().NotContain("A",
-            "Production node at score 30 < Exit=35 must be demoted to Standby");
+            "Production node at score 30 < EffectiveExit, MinTenure expired → demoted");
         nodes[0].TrafficTier.Should().Be(TrafficTier.Standby,
             "demoted node must have TrafficTier=Standby");
     }
@@ -207,41 +208,50 @@ public class ProductionPoolTests
         var mgr = new ActiveSetManager(nodes);
         mgr.GetProductionTags(); // promotes A,B,C (target=3)
 
-        // C drops to 30 → demoted → vacancy of 1
+        // C drops to 30 — below EffectiveExit. Simulate C promoted 5min ago (MinTenure expired).
         nodes[2].UpdateScore(100, 0.0, 30, 0);
+        nodes[2].OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
         var production = mgr.GetProductionTags();
 
         production.Count.Should().Be(3, "vacancy should be filled — target size maintained");
         production.Should().Contain("D",
             "D (score=65 >= Entry=60) should be promoted from Standby to fill vacancy");
         production.Should().NotContain("C",
-            "C dropped below Exit → demoted");
+            "C dropped below EffectiveExit, MinTenure expired → demoted");
     }
 
     [Fact]
     public void GetProductionTags_MultipleVacancies_PromotesMultiple()
     {
+        // 12 eligible → target=clamp(ceil(12×0.35)=5, 3, 6)=5
+        // First call: promotes top 5 (A-E) as Production.
+        // Then drop A→30, C→25 (below EffectiveExit=35, with MinTenure expired).
+        // Remaining production nodes B(88),D(84),E(82) keep median=84 → EffectiveExit=35.
+        // 2 vacancies → F(80), G(78) promoted from Standby.
         var nodes = new List<NodeState>
         {
-            CreateNode("A", 80),
-            CreateNode("B", 75),
-            CreateNode("C", 70),
-            CreateNode("D", 68), // standby, score >= 60
-            CreateNode("E", 65), // standby, score >= 60
-            CreateNode("F", 50),
+            CreateNode("A", 90), CreateNode("B", 88), CreateNode("C", 86),
+            CreateNode("D", 84), CreateNode("E", 82),
+            CreateNode("F", 80), CreateNode("G", 78), CreateNode("H", 75),
+            CreateNode("I", 72), CreateNode("J", 70), CreateNode("K", 65),
+            CreateNode("L", 62),
         };
 
         var mgr = new ActiveSetManager(nodes);
-        mgr.GetProductionTags(); // promotes A,B,C (target=3)
+        mgr.GetProductionTags(); // promotes A,B,C,D,E (target=5, all >= 60)
 
-        // A and C drop below Exit → 2 vacancies
+        // A and C drop below Exit=35. Median of [30,88,25,84,82] = 84 → EffectiveExit=35.
         nodes[0].UpdateScore(100, 0.0, 30, 0);
         nodes[2].UpdateScore(100, 0.0, 25, 0);
+        foreach (var n in new[] { nodes[0], nodes[1], nodes[2], nodes[3], nodes[4] })
+            n.OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
         var production = mgr.GetProductionTags();
 
-        production.Count.Should().Be(3, "both vacancies filled");
-        production.Should().Contain(new[] { "D", "E" },
-            "D and E should be promoted to fill 2 vacancies");
+        production.Count.Should().Be(5, "2 demoted + 2 promoted = target maintained");
+        production.Should().Contain(new[] { "F", "G" },
+            "F(80) and G(78) promoted from Standby to fill 2 vacancies");
+        production.Should().NotContain(new[] { "A", "C" },
+            "A(30) and C(25) below EffectiveExit=35, MinTenure expired → demoted");
     }
 
     // ── Score-Driven Replacement PROHIBITED (§5.7.3) ────────────
@@ -311,15 +321,15 @@ public class ProductionPoolTests
     // ── Standby Fallback (§5.7.7) ───────────────────────────────
 
     [Fact]
-    public void GetProductionTags_StandbyInsufficient_FallbackToExitThreshold()
+    public void GetProductionTags_StandbyInsufficient_FallbackToEntryThreshold48()
     {
-        // Only 1 Standby >= 60, but need 3 Production. Fallback: promote >= 35.
+        // Only 1 Standby >= 60, need 3 Production. Fallback: promote >= 48 (v7.6).
         var nodes = new List<NodeState>
         {
-            CreateNode("A", 80),  // → Production
-            CreateNode("B", 55),  // → Fallback (>= 35, < 60)
-            CreateNode("C", 45),  // → Fallback (>= 35, < 60)
-            CreateNode("D", 30),  // → excluded (< 35)
+            CreateNode("A", 80),  // → Production (normal)
+            CreateNode("B", 55),  // → Fallback (>= 48, < 60)
+            CreateNode("C", 50),  // → Fallback (>= 48, < 60)
+            CreateNode("D", 45),  // → excluded (< 48)
         };
 
         var mgr = new ActiveSetManager(nodes);
@@ -327,9 +337,9 @@ public class ProductionPoolTests
 
         // target=clamp(ceil(4*0.35)=2, 3, 6)=3
         // A(80) >= Entry → standard promotion
-        // B(55), C(45) >= Exit but < Entry → fallback promotion
-        // D(30) < Exit → excluded
-        production.Count.Should().Be(3, "fallback allows score >= 35 nodes to fill vacancies");
+        // B(55), C(50) >= Fallback=48 but < Entry=60 → fallback promotion
+        // D(45) < Fallback=48 → excluded
+        production.Count.Should().Be(3, "fallback allows score >= 48 nodes to fill vacancies");
         production.Should().Contain(new[] { "A", "B", "C" });
         production.Should().NotContain("D");
     }
@@ -337,23 +347,24 @@ public class ProductionPoolTests
     [Fact]
     public void GetProductionTags_AllBelowEntry_AllFallback()
     {
-        // No nodes >= 60 — all promotions are fallback (>= 35)
+        // No nodes >= 60 — all promotions are fallback (>= 48, v7.6)
         var nodes = new List<NodeState>
         {
             CreateNode("A", 55),
-            CreateNode("B", 50),
-            CreateNode("C", 48),
-            CreateNode("D", 40),
+            CreateNode("B", 52),
+            CreateNode("C", 50),
+            CreateNode("D", 47),
             CreateNode("E", 30),
         };
 
         var mgr = new ActiveSetManager(nodes);
         var production = mgr.GetProductionTags();
 
-        // target=3. Top 3 by score (>= 35) promoted.
+        // target=3. Top 3 by score (>= 48) promoted.
         production.Count.Should().Be(3);
         production.Should().Contain(new[] { "A", "B", "C" });
-        production.Should().NotContain("E", "score=30 < Exit=35");
+        production.Should().NotContain("D", "score=47 < FallbackPromotionThreshold=48");
+        production.Should().NotContain("E", "score=30 < FallbackPromotionThreshold=48");
     }
 
     // ── Cooldown & Recovery (preserved from v7.4) ───────────────
@@ -466,8 +477,9 @@ public class ProductionPoolTests
         var changed1 = mgr.HasActiveSetChanged();
         changed1.Should().BeFalse("no vacancy — D can't enter Production, no change");
 
-        // Now A drops to 30 → demoted → vacancy → D promoted
+        // Now A drops to 30 → demoted (MinTenure expired) → vacancy → D promoted
         nodes[0].UpdateScore(100, 0.0, 30, 0);
+        nodes[0].OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
         var changed2 = mgr.HasActiveSetChanged();
         changed2.Should().BeTrue("A demoted + D promoted → Production Pool changed");
     }
@@ -504,5 +516,224 @@ public class ProductionPoolTests
         mgr.GetProductionTags();
 
         mgr.IsEligiblePoolEmpty.Should().BeFalse();
+    }
+
+    // ── Adaptive Exit (§5.1.3, v7.6) ────────────────────────────
+
+    [Fact]
+    public void ComputeEffectiveExit_HighQualityPool_ReturnsConfiguredExit35()
+    {
+        // Production scores: 95,92,88,86,84,80 → median=87
+        // 87-15=72 → min(35,72)=35 → max(25,35)=35
+        var mgr = new ActiveSetManager(new List<NodeState>());
+        var productionScores = new[] { 95.0, 92, 88, 86, 84, 80 };
+        mgr.ComputeEffectiveExit(productionScores).Should().Be(35,
+            "high-quality pool: median(87)-15=72 → capped at ConfiguredExit=35");
+    }
+
+    [Fact]
+    public void ComputeEffectiveExit_MediocrePool_LowersExitThreshold()
+    {
+        // Production scores: 55,52,50,48,46,44 → median=49
+        // 49-15=34 → min(35,34)=34 → max(25,34)=34
+        var mgr = new ActiveSetManager(new List<NodeState>());
+        var productionScores = new[] { 55.0, 52, 50, 48, 46, 44 };
+        mgr.ComputeEffectiveExit(productionScores).Should().Be(34,
+            "mediocre pool: median(49)-15=34 → below ConfiguredExit=35, auto-lower");
+    }
+
+    [Fact]
+    public void ComputeEffectiveExit_VeryLowPool_FloorAt25()
+    {
+        // Production scores: 30,28,26,25,24,22 → median=25.5
+        // 25.5-15=10.5 → min(35,10.5)=10.5 → max(25,10.5)=25
+        var mgr = new ActiveSetManager(new List<NodeState>());
+        var productionScores = new[] { 30.0, 28, 26, 25, 24, 22 };
+        mgr.ComputeEffectiveExit(productionScores).Should().Be(25,
+            "very low pool: floor=25 prevents Exit from collapsing");
+    }
+
+    [Fact]
+    public void ComputeEffectiveExit_SingleNode_HandlesEdgeCase()
+    {
+        // Single production node at score=40
+        // median=40 → 40-15=25 → min(35,25)=25 → max(25,25)=25
+        var mgr = new ActiveSetManager(new List<NodeState>());
+        var productionScores = new[] { 40.0 };
+        mgr.ComputeEffectiveExit(productionScores).Should().Be(25,
+            "single node at 40: median-15=25, floor=25");
+    }
+
+    [Fact]
+    public void GetProductionTags_AdaptiveExit_AllowsLowerThresholdInMediocrePool()
+    {
+        // Production scores: 56,52,50,50,48,44 → median=(50+50)/2=50
+        // EffectiveExit = max(25, min(35, 50-15)) = 35
+        // All nodes >= 35 stay. Node at 33 (< 35) gets demoted (if MinTenure expired).
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 56), CreateNode("B", 52), CreateNode("C", 50),
+            CreateNode("D", 50), CreateNode("E", 48), CreateNode("F", 44),
+            CreateNode("G", 33),
+        };
+        nodes[0].SetTrafficTier(TrafficTier.Production);
+        nodes[1].SetTrafficTier(TrafficTier.Production);
+        nodes[2].SetTrafficTier(TrafficTier.Production);
+        nodes[3].SetTrafficTier(TrafficTier.Production);
+        nodes[4].SetTrafficTier(TrafficTier.Production);
+        nodes[5].SetTrafficTier(TrafficTier.Production);
+
+        var mgr = new ActiveSetManager(nodes);
+        var production = mgr.GetProductionTags();
+
+        // All 6 have scores >= 35 (EffectiveExit) → all kept
+        production.Count.Should().Be(6);
+        production.Should().Contain(new[] { "A", "B", "C", "D", "E", "F" });
+
+        // Now A drops to 33. Production scores: [33,52,50,50,48,44] → median=49 → EffectiveExit=34.
+        // A=33 < 34 → demoted (MinTenure expired via Override).
+        nodes[0].UpdateScore(100, 0.0, 33, 0);
+        nodes[0].OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
+        var production2 = mgr.GetProductionTags();
+        production2.Should().NotContain("A", "score=33 < EffectiveExit(34), MinTenure expired → demoted");
+        // G at 33 is Standby, below EffectiveExit=34, not promoted (no vacancy from A yet,
+        // but A demotion creates vacancy). Wait — after A demotion, target=6, pool was 6.
+        // Actually target for 7 eligible = clamp(ceil(7*0.35)=3, 3, 6)=3.
+        // A(33) demoted → production has 5. Target=3, so pool is already over target.
+        // No vacancy fill needed. G stays Standby.
+    }
+
+    // ── MinTenure 3-Tier (§5.1.4, v7.6) ─────────────────────────
+
+    [Fact]
+    public void ComputeMinTenure_HighScore_300Seconds()
+    {
+        var mgr = new ActiveSetManager(new List<NodeState>());
+        mgr.ComputeMinTenure(80).Should().Be(TimeSpan.FromSeconds(300));
+        mgr.ComputeMinTenure(55).Should().Be(TimeSpan.FromSeconds(300));
+    }
+
+    [Fact]
+    public void ComputeMinTenure_MediumScore_120Seconds()
+    {
+        var mgr = new ActiveSetManager(new List<NodeState>());
+        mgr.ComputeMinTenure(54).Should().Be(TimeSpan.FromSeconds(120));
+        mgr.ComputeMinTenure(40).Should().Be(TimeSpan.FromSeconds(120));
+    }
+
+    [Fact]
+    public void ComputeMinTenure_LowScore_30Seconds()
+    {
+        var mgr = new ActiveSetManager(new List<NodeState>());
+        mgr.ComputeMinTenure(39).Should().Be(TimeSpan.FromSeconds(30));
+        mgr.ComputeMinTenure(10).Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public void GetProductionTags_MinTenure_PreventsRapidDemotionOfNewNode()
+    {
+        // Promote A at score 36 into Production.
+        // Immediately drop A to 30 (below EffectiveExit).
+        // MinTenure for score<40 = 30s. Node just promoted → tenure not expired → stays.
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 36),
+            CreateNode("B", 70),
+            CreateNode("C", 65),
+            CreateNode("D", 60),
+            CreateNode("E", 55),
+            CreateNode("F", 50),
+            CreateNode("G", 48),
+        };
+        nodes[0].SetTrafficTier(TrafficTier.Production); // just promoted
+
+        var mgr = new ActiveSetManager(nodes);
+        // EffectiveExit for 55,52,50,48,46,44 pool ≈ 34
+        // A at 36 >= 34 → stays anyway at first call
+
+        // Now drop A to 30 — below EffectiveExit
+        nodes[0].UpdateScore(100, 0.0, 30, 0);
+        var production = mgr.GetProductionTags();
+
+        // A was just promoted (MinTenure=30s not expired), so stays
+        production.Should().Contain("A",
+            "newly promoted node protected by MinTenure even though score < EffectiveExit");
+    }
+
+    [Fact]
+    public void GetProductionTags_MinTenure_Expired_AllowsDemotion()
+    {
+        // A was promoted long ago (by setting promotedAt to 5 minutes ago).
+        // RunningScore=30 → MinTenure=30s. Tenure expired → can be demoted.
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 30),
+            CreateNode("B", 70),
+            CreateNode("C", 65),
+            CreateNode("D", 60),
+            CreateNode("E", 55),
+            CreateNode("F", 50),
+            CreateNode("G", 48),
+        };
+        nodes[0].SetTrafficTier(TrafficTier.Production);
+        nodes[1].SetTrafficTier(TrafficTier.Production);
+        nodes[2].SetTrafficTier(TrafficTier.Production);
+        nodes[3].SetTrafficTier(TrafficTier.Production);
+        nodes[4].SetTrafficTier(TrafficTier.Production);
+        nodes[5].SetTrafficTier(TrafficTier.Production);
+        // Simulate A being promoted 5 minutes ago
+        nodes[0].OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
+
+        var mgr = new ActiveSetManager(nodes);
+        var production = mgr.GetProductionTags();
+
+        // A score=30, EffectiveExit≈34, MinTenure expired → demoted
+        production.Should().NotContain("A",
+            "A's MinTenure expired (promoted 5min ago, score<40 → 30s tenure) → demoted");
+    }
+
+    [Fact]
+    public void GetProductionTags_MinTenure_OnlyGatesScoreDemotion_NotCooldown()
+    {
+        // Cooldown bypasses MinTenure entirely — handled by eligibility filter
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 80, inCooldown: true),
+            CreateNode("B", 70),
+            CreateNode("C", 65),
+            CreateNode("D", 60),
+        };
+        nodes[0].SetTrafficTier(TrafficTier.Production);
+        nodes[1].SetTrafficTier(TrafficTier.Production);
+        nodes[2].SetTrafficTier(TrafficTier.Production);
+
+        var mgr = new ActiveSetManager(nodes);
+        var production = mgr.GetProductionTags();
+
+        // Cooldown nodes excluded regardless of score or MinTenure
+        production.Should().NotContain("A",
+            "cooldown node excluded — eligibility filter bypasses MinTenure");
+    }
+
+    // ── Fallback Promotion Threshold 48 (§5.1.2, v7.6) ──────────
+
+    [Fact]
+    public void GetProductionTags_Fallback_UsesThreshold48()
+    {
+        // Only 1 Standby >= 60, need 3 Production. Fallback: promote >= 48 not >= 35.
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 80),  // → Production (normal)
+            CreateNode("B", 55),  // → Fallback (>= 48)
+            CreateNode("C", 50),  // → Fallback (>= 48)
+            CreateNode("D", 45),  // → excluded (< 48)
+        };
+
+        var mgr = new ActiveSetManager(nodes);
+        var production = mgr.GetProductionTags();
+
+        production.Count.Should().Be(3);
+        production.Should().Contain(new[] { "A", "B", "C" });
+        production.Should().NotContain("D", "score=45 < FallbackPromotionThreshold=48");
     }
 }

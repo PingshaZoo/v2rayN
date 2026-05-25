@@ -54,6 +54,7 @@ public sealed class NodeState
 
     // ── traffic tier (P2: orthogonal to HealthState) ───────────
     private TrafficTier _trafficTier = TrafficTier.Standby;
+    private DateTime _productionPromotedAt = DateTime.MinValue; // v7.6 MinTenure
     private int _recoveryProbeSuccessCount;
     private DateTime _stabilityVerificationStartedAt = DateTime.MinValue;
     private int _cooldownBackoffLevel; // n for exponential backoff: 30s * 2^n
@@ -78,6 +79,7 @@ public sealed class NodeState
     public int CooldownBackoffLevel => _cooldownBackoffLevel;
     public DateTime StabilityVerificationStartedAt => _stabilityVerificationStartedAt;
     public TrafficTier TrafficTier => _trafficTier;
+    public DateTime ProductionPromotedAt => _productionPromotedAt;
 
     public string? CachedIp => _cachedIp;
     public DateTime DnsLastResolved => _dnsLastResolved;
@@ -155,7 +157,27 @@ public sealed class NodeState
 
     public void SetTrafficTier(TrafficTier tier)
     {
-        lock (_lock) { _trafficTier = tier; }
+        lock (_lock)
+        {
+            if (tier == TrafficTier.Production && _trafficTier != TrafficTier.Production)
+                _productionPromotedAt = DateTime.UtcNow;
+            _trafficTier = tier;
+        }
+    }
+
+    /// <summary>Test-only: override promotion timestamp for MinTenure expiry tests.</summary>
+    public void OverrideProductionPromotedAt(DateTime when)
+    {
+        lock (_lock) { _productionPromotedAt = when; }
+    }
+
+    /// <summary>Check if MinTenure has expired for score-based demotion gating (v7.6).</summary>
+    public bool IsMinTenureExpired(TimeSpan minTenure)
+    {
+        // If never promoted to Production, tenure is irrelevant — allow demotion
+        if (_productionPromotedAt == DateTime.MinValue)
+            return true;
+        return (DateTime.UtcNow - _productionPromotedAt) >= minTenure;
     }
 
     // ── DNS cache management (§13.4) ───────────────────────────

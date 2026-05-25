@@ -18,7 +18,7 @@
 | **P0（v7.4）** | ✅ 完成 (2026-05-23) | HealthState gate + FSM 合法路径 + 兜底逻辑 |
 | **P1（v7.4）** | ✅ 完成 (2026-05-23) | Reload 基线延长 + UI 合并 + 全局开关删除 + severity 分级 |
 | **P2（v7.5）** | ✅ 完成 (2026-05-24) | Bounded Production Pool + Failure-Driven Promotion（UI 配置/P2a-c 子任务待后续） |
-| **Anti-Churn（v7.6）** | 📋 设计定稿 (2026-05-25) | Adaptive Exit + Fallback Repair + MinTenure + ReloadCooldown |
+| **Anti-Churn（v7.6）** | ✅ 完成 (2026-05-25) | Adaptive Exit + Fallback Repair + MinTenure + ReloadCooldown |
 
 ---
 
@@ -90,10 +90,10 @@
 
 | # | 变更 | 状态 | 涉及文件 |
 |---|------|------|---------|
-| AF-1 | FallbackPromotionThreshold 35→48 | 📋 待实施 | `ActiveSetManager.cs` |
-| AF-2 | Adaptive Exit: `max(25, min(35, median-15))` | 📋 待实施 | `ActiveSetManager.cs` |
-| AF-3 | MinTenure 3 档（30s/120s/300s），基于 runningScore | 📋 待实施 | `ActiveSetManager.cs`, `NodeState.cs` |
-| AF-4 | ReloadCooldown 60s hard floor | 📋 待实施 | `AdaptiveSchedulerManager.cs` |
+| AF-1 | FallbackPromotionThreshold 35→48 | ✅ 完成 (2026-05-25) | `ActiveSetManager.cs` |
+| AF-2 | Adaptive Exit: `max(25, min(35, median-15))` | ✅ 完成 (2026-05-25) | `ActiveSetManager.cs` |
+| AF-3 | MinTenure 3 档（30s/120s/300s），基于 runningScore | ✅ 完成 (2026-05-25) | `ActiveSetManager.cs`, `NodeState.cs` |
+| AF-4 | ReloadCooldown 60s hard floor | ✅ 完成 (2026-05-25) | `AdaptiveSchedulerManager.cs` |
 
 **关键设计决策**：
 

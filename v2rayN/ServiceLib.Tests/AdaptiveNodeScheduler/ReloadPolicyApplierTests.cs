@@ -101,4 +101,24 @@ public class ReloadPolicyApplierTests
             "second apply within debounce window should be queued, not fired immediately");
         appliedConfigs[0].ActiveTags.Should().Contain("A");
     }
+
+    // ── ReloadCooldown 60s hard floor (§5.1.5, v7.6) ──────────
+
+    [Fact]
+    public void ReloadCooldown_HardFloor_60Seconds()
+    {
+        AdaptiveSchedulerManager.ReloadCooldownMs.Should().Be(60_000,
+            "ReloadCooldown must be exactly 60s — the 4th anti-churn layer");
+    }
+
+    [Fact]
+    public void ReloadCooldown_GreaterThanOrEqual_NormalInterval()
+    {
+        // ReloadCooldown (60s) is the hard floor — NormalInterval (30s in ReloadPolicyApplier)
+        // is an internal implementation detail. The scheduler's ReloadCooldown must be
+        // at least 60s to prevent reload storms in 60+ node environments.
+        AdaptiveSchedulerManager.ReloadCooldownMs.Should().BeGreaterThanOrEqualTo(60_000);
+        AdaptiveSchedulerManager.ReloadCooldownMs.Should().BeLessThanOrEqualTo(120_000,
+            "ReloadCooldown max 120s to avoid excessive staleness");
+    }
 }

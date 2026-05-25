@@ -156,8 +156,9 @@ public class ActiveSetManagerTests
         nodes.First(n => n.Tag == "C").UpdateScore(100, 0.0, 65, 0);
         mgr.GetProductionTags(); // establishes C in sticky
 
-        // Now drop C to 30
+        // Now drop C to 30 — simulate MinTenure expired
         nodes.First(n => n.Tag == "C").UpdateScore(100, 0.0, 30, 0);
+        nodes.First(n => n.Tag == "C").OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
         var secondActive = mgr.GetProductionTags();
 
         secondActive.Should().NotContain("C",
@@ -247,9 +248,9 @@ public class ActiveSetManagerTests
     [Fact]
     public void HasActiveSetChanged_VacancyThenStandbyCrossesEntry_ShouldTriggerChange()
     {
-        // 5 eligible, target=3. A(80),B(70) >= 60 → Production. C(50) >= 35 → fallback.
+        // 5 eligible, target=3. A(80),B(70) >= 60 → Production. C(50) >= 48 → fallback (v7.6).
         // Production = {A,B,C}. Prime establishes baseline.
-        // A drops to 30 (< Exit=35) → demoted → vacancy. C was already in production.
+        // A drops to 30 (MinTenure expired) → demoted → vacancy.
         // D rises to 65 (>= Entry) → promoted to fill vacancy → change detected.
         var nodes = new List<NodeState>
         {
@@ -264,8 +265,9 @@ public class ActiveSetManagerTests
         mgr.GetProductionTags(); // establishes Production = {A,B,C}
         mgr.Prime();
 
-        // A drops below Exit → demoted to Standby → vacancy of 1
+        // A drops below EffectiveExit — simulate MinTenure expired
         nodes.First(n => n.Tag == "A").UpdateScore(100, 0.0, 30, 0);
+        nodes.First(n => n.Tag == "A").OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5));
         // D rises to 65 — crosses Entry=60 → fills vacancy
         nodes.First(n => n.Tag == "D").UpdateScore(100, 0.0, 65, 0);
         bool changed = mgr.HasActiveSetChanged();

@@ -33,6 +33,10 @@ public sealed class ActiveSetManager
     public const double ExitThreshold = 35.0;
     /// <summary>Minimum score for fallback promotion (buffer above Exit to prevent immediate re-demotion).</summary>
     public const double FallbackPromotionThreshold = 48.0;
+    /// <summary>Floor for EffectiveExit — absolute minimum survivability (v7.6).</summary>
+    public const double FloorExit = 25.0;
+    /// <summary>Margin subtracted from Production median to compute EffectiveExit (v7.6).</summary>
+    public const double DynamicMargin = 15.0;
 
     /// <summary>Default fraction of eligible nodes targeted for Production pool.</summary>
     public const double DefaultActiveFraction = 0.35;
@@ -58,6 +62,7 @@ public sealed class ActiveSetManager
         public int CurrentProductionCount, StandbyCount, KeepCount, DemotedCount, Vacancy;
         public int StandardPromotedCount, FallbackPromotedCount, FinalProductionCount;
         public bool SafetyNetTriggered;
+        public double EffectiveExit;
         public List<string> Tags = new();
         public List<string> DemotedTags = new();
         public List<string> StandardPromotedTags = new();
@@ -141,16 +146,30 @@ public sealed class ActiveSetManager
             .Where(n => n.TrafficTier == TrafficTier.Standby)
             .ToList();
 
-        // Step 1: Keep Production nodes above Exit (sticky protection)
-        var keep = currentProduction
-            .Where(n => n.Score >= ExitThreshold)
-            .OrderByDescending(n => n.Score)
-            .ToList();
-
-        // Demote Production nodes that fell below Exit
-        var demoted = currentProduction.Where(n => n.Score < ExitThreshold).ToList();
-        foreach (var node in demoted)
-            node.SetTrafficTier(TrafficTier.Standby);
+        // Step 1: Keep Production nodes above EffectiveExit (sticky, with MinTenure gate)
+        double effectiveExit = ComputeEffectiveExit(currentProduction.Select(n => n.Score).ToList());
+        var keep = new List<NodeState>();
+        var demoted = new List<NodeState>();
+        foreach (var node in currentProduction.OrderByDescending(n => n.Score))
+        {
+            if (node.Score >= effectiveExit)
+            {
+                keep.Add(node);
+            }
+            else
+            {
+                var minTenure = ComputeMinTenure(node.Score);
+                if (node.IsMinTenureExpired(minTenure))
+                {
+                    node.SetTrafficTier(TrafficTier.Standby);
+                    demoted.Add(node);
+                }
+                else
+                {
+                    keep.Add(node); // still sticky — MinTenure not expired
+                }
+            }
+        }
 
         var production = new List<NodeState>();
         production.AddRange(keep);
@@ -221,6 +240,7 @@ public sealed class ActiveSetManager
             FallbackPromotedCount = promoteFallback.Count,
             FinalProductionCount = tags.Count,
             SafetyNetTriggered = safetyNetTriggered,
+            EffectiveExit = effectiveExit,
             Tags = tags,
             DemotedTags = demoted.Select(n => $"{n.Tag}(score={n.Score:F1})").ToList(),
             StandardPromotedTags = promoteStandard.Select(n => $"{n.Tag}(score={n.Score:F1})").ToList(),
@@ -289,9 +309,9 @@ public sealed class ActiveSetManager
                 $"totalN={t.TotalNodes} eligible={t.EligibleCount} target={t.TargetSize} (N×{t.ActiveFraction:F2} clamp [{t.MinProduction},{t.MaxProduction}]) " +
                 $"currentProd={t.CurrentProductionCount} standby={t.StandbyCount} keep={t.KeepCount} demoted={t.DemotedCount} vacancy={t.Vacancy} " +
                 $"stdPromo={t.StandardPromotedCount} fallbackPromo={t.FallbackPromotedCount} finalProd={t.FinalProductionCount} safetyNet={t.SafetyNetTriggered} " +
-                $"tags=[{string.Join(",", t.Tags)}]");
+                $"effExit={t.EffectiveExit:F1} tags=[{string.Join(",", t.Tags)}]");
             foreach (var d in t.DemotedTags)
-                Logging.SaveLog($"[Adaptive] ProductionPool DEMOTE: {d} (score<Exit={ExitThreshold})");
+                Logging.SaveLog($"[Adaptive] ProductionPool DEMOTE: {d} (score<EffectiveExit={t.EffectiveExit:F1})");
             foreach (var p in t.StandardPromotedTags)
                 Logging.SaveLog($"[Adaptive] ProductionPool PROMOTE(standard>=Entry={EntryThreshold}): {p}");
             foreach (var p in t.FallbackPromotedTags)
@@ -328,5 +348,36 @@ public sealed class ActiveSetManager
     {
         int raw = (int)Math.Ceiling(eligibleCount * _activeFraction);
         return Math.Clamp(raw, _minProductionNodes, _maxProductionNodes);
+    }
+
+    // ── v7.6 Anti-Churn helpers ────────────────────────────────
+
+    /// <summary>
+    /// EffectiveExitThreshold = max(FloorExit, min(ConfiguredExit, ProductionMedian - DynamicMargin)).
+    /// Environment-adaptive failure sensitivity — lowers exit bar when the whole pool degrades,
+    /// but never below the Floor. Absolute failure semantics preserved.
+    /// </summary>
+    public double ComputeEffectiveExit(IReadOnlyList<double> productionScores)
+    {
+        if (productionScores.Count == 0)
+            return (double)ExitThreshold;
+
+        var sorted = productionScores.OrderBy(s => s).ToList();
+        double median = sorted.Count % 2 == 1
+            ? sorted[sorted.Count / 2]
+            : (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]) / 2.0;
+
+        return Math.Max(FloorExit, Math.Min((double)ExitThreshold, median - DynamicMargin));
+    }
+
+    /// <summary>
+    /// MinTenure based on the node's runningScore (real-traffic EWMA, not probe score).
+    /// Discrete 3-tier: >=55 → 300s, >=40 → 120s, <40 → 30s.
+    /// </summary>
+    public TimeSpan ComputeMinTenure(double runningScore)
+    {
+        if (runningScore >= 55) return TimeSpan.FromSeconds(300);
+        if (runningScore >= 40) return TimeSpan.FromSeconds(120);
+        return TimeSpan.FromSeconds(30);
     }
 }
