@@ -91,6 +91,8 @@ public sealed class ActiveSetManager
         _activeFraction = Math.Clamp(activeFraction, 0.15, 0.60);
         _minProductionNodes = Math.Clamp(minProductionNodes, 2, 8);
         _maxProductionNodes = Math.Clamp(maxProductionNodes, 3, 12);
+        if (_maxProductionNodes < _minProductionNodes)
+            _maxProductionNodes = _minProductionNodes;
         Logging.SaveLog($"[Adaptive] ActiveSetManager init: totalNodes={nodes.Count}, fraction={_activeFraction:F2}, minProduction={_minProductionNodes}, maxProduction={_maxProductionNodes}");
     }
 
@@ -213,12 +215,12 @@ public sealed class ActiveSetManager
         if (tags.Count == 0 && eligible.Count > 0)
         {
             safetyNetTriggered = true;
-            tags = eligible
+            var safetyNodes = eligible
                 .OrderByDescending(n => n.Score)
                 .Take(targetSize)
-                .Select(n => n.Tag)
                 .ToList();
-            foreach (var node in eligible.Take(targetSize))
+            tags = safetyNodes.Select(n => n.Tag).ToList();
+            foreach (var node in safetyNodes)
                 node.SetTrafficTier(TrafficTier.Production);
         }
 

@@ -55,11 +55,21 @@ public partial class CoreConfigV2rayService
         //   - xray's observatory is disabled — probing is handled by our ProbeService
         var activeTags = adaptive.ActiveTags;
         var activeSelector = proxyOutboundList
-            .Where(o => activeTags.Count == 0 || activeTags.Contains(o.tag))
+            .Where(o => activeTags.Contains(o.tag))
             .Select(o => o.tag)
             .ToList();
+        if (activeSelector.Count == 0)
+        {
+            var fallback = proxyOutboundList
+                .FirstOrDefault(o => !adaptive.CooldownTags.Contains(o.tag))
+                ?? proxyOutboundList.FirstOrDefault();
+            if (fallback != null)
+            {
+                activeSelector.Add(fallback.tag);
+            }
+        }
 
-        if (activeSelector.Count > 1)
+        if (activeSelector.Count > 0)
         {
             _coreConfig.observatory = null;
 
@@ -81,16 +91,6 @@ public partial class CoreConfigV2rayService
             {
                 finalRule.balancerTag = balancerTag;
                 finalRule.outboundTag = null;
-            }
-        }
-        else if (activeSelector.Count == 1)
-        {
-            var singleTag = activeSelector[0];
-            var finalRule = _coreConfig.routing.rules
-                .FirstOrDefault(r => r.outboundTag == Global.ProxyTag);
-            if (finalRule != null)
-            {
-                finalRule.outboundTag = singleTag;
             }
         }
     }

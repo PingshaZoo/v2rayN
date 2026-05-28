@@ -42,6 +42,11 @@ public sealed class CooldownFsm
         double totalSec = Math.Min(baseSec + hashOffset, MaxSeconds);
 
         node.SetCooldown(DateTime.UtcNow.AddSeconds(totalSec));
+        if (node.HealthState == NodeHealthState.Active)
+        {
+            node.SetHealthState(NodeHealthState.Failed);
+            node.ResetRecoveryProbeSuccess();
+        }
     }
 
     /// <summary>

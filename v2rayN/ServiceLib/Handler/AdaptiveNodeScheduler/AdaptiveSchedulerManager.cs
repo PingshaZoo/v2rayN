@@ -172,7 +172,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
 
         return new AdaptiveConfig
         {
-            ActiveTags = _nodes.Select(n => n.Tag).ToList(),
+            ActiveTags = _activeSetManager.GetProductionTags(),
             CooldownTags = [],
             ProbePorts = _probePorts,
             NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score),
@@ -372,10 +372,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                 }
             }
 
-            // P2: Check for active-set changes first (computes production tags)
-            bool hasChanged = _activeSetManager.HasActiveSetChanged();
-
-            // P0#1: Evaluate global freeze state using the current production set
+            // P0#1: Evaluate global freeze state before any active-set mutation.
             var activeTags = _activeSetManager.CurrentProductionTags;
             var freezeDecision = _freezeController.Evaluate(activeTags);
 
@@ -415,6 +412,9 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
             }
 
             // Normal operation — reload if active-set changed or recovery promoted
+            // P2: Check for active-set changes only after freeze allows mutation.
+            bool hasChanged = _activeSetManager.HasActiveSetChanged();
+
             if (hasChanged || recoveryPromoted)
             {
                 bool catastrophic = _activeSetManager.IsEligiblePoolEmpty;
@@ -571,6 +571,7 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
             ProbeUrl = group?.AdaptiveProbeUrl ?? global.ProbeUrl,
             ProbeIntervalSec = group?.AdaptiveProbeIntervalSec ?? global.ProbeIntervalSec,
             ProbeTimeoutMs = group?.AdaptiveProbeTimeoutMs ?? global.ProbeTimeoutMs,
+            ProbeHeavyFraction = group?.AdaptiveProbeHeavyFraction ?? global.ProbeHeavyFraction,
         };
     }
 

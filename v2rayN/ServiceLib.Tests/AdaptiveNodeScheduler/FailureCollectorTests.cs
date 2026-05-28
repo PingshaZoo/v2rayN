@@ -144,4 +144,21 @@ public class FailureCollectorTests
         scoreAfterRefused.Should().BeLessThan(scoreAfterEof,
             "Refused should be penalized more aggressively than UnexpectedEof");
     }
+
+    [Fact]
+    public void RecordFailure_SecondFailureEnteringCooldown_ShouldMarkHealthStateFailed()
+    {
+        var scorer = new ScoreCalculator();
+        var cooldown = new CooldownFsm();
+        var collector = new FailureCollector(scorer, cooldown);
+        var node = CreateNode(score: 80);
+        var peer = CreateNode("peer", score: 80);
+
+        collector.RecordFailure(node, FailureType.Timeout, [node, peer]);
+        collector.RecordFailure(node, FailureType.Timeout, [node, peer]);
+
+        node.IsInCooldown.Should().BeTrue("two consecutive failures should enter cooldown");
+        node.HealthState.Should().Be(NodeHealthState.Failed,
+            "cooldown expiry must flow through Failed -> RecoveryProbing instead of returning directly to Active");
+    }
 }

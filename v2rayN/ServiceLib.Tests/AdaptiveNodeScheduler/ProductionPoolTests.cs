@@ -736,4 +736,43 @@ public class ProductionPoolTests
         production.Should().Contain(new[] { "A", "B", "C" });
         production.Should().NotContain("D", "score=45 < FallbackPromotionThreshold=48");
     }
+
+    [Fact]
+    public void Constructor_MinGreaterThanMax_ClampsToValidRange()
+    {
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 90), CreateNode("B", 88), CreateNode("C", 86),
+            CreateNode("D", 84), CreateNode("E", 82), CreateNode("F", 80),
+            CreateNode("G", 78), CreateNode("H", 76), CreateNode("I", 74),
+        };
+
+        var mgr = new ActiveSetManager(nodes, activeFraction: 0.35, minProductionNodes: 8, maxProductionNodes: 3);
+        var production = mgr.GetProductionTags();
+
+        production.Count.Should().Be(8,
+            "invalid per-group min/max settings should be normalized instead of throwing or shrinking below min");
+    }
+
+    [Fact]
+    public void GetProductionTags_SafetyNet_MarksSameNodesAsProduction()
+    {
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 30),
+            CreateNode("B", 20),
+            CreateNode("C", 10),
+            CreateNode("D", 5),
+        };
+
+        var mgr = new ActiveSetManager(nodes);
+        var production = mgr.GetProductionTags();
+
+        production.Should().BeEquivalentTo(new[] { "A", "B", "C" },
+            "when all scores are below fallback threshold, safety net chooses the highest-score eligible nodes");
+        nodes.Where(n => production.Contains(n.Tag))
+            .Should().OnlyContain(n => n.TrafficTier == TrafficTier.Production,
+                "the persisted TrafficTier must match the safety-net selector");
+        nodes.First(n => n.Tag == "D").TrafficTier.Should().Be(TrafficTier.Standby);
+    }
 }

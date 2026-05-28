@@ -718,5 +718,54 @@ public class CoreConfigV2rayServiceTests
         balancer.selector.Should().Contain(active2);
     }
 
+    [Fact]
+    public void GenerateClientConfigContent_AdaptiveConfig_EmptyActiveTags_ShouldNotExposeAllNodes()
+    {
+        var config = CoreConfigTestFactory.CreateConfig(ECoreType.Xray);
+        CoreConfigTestFactory.BindAppManagerConfig(config);
+
+        var n1 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n1", "node-a");
+        var n2 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n2", "node-cooldown");
+        var n3 = CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray, "n3", "node-b");
+        var group = CoreConfigTestFactory.CreatePolicyGroupNode(ECoreType.Xray, "g1", "group",
+            [n1.IndexId, n2.IndexId, n3.IndexId]);
+
+        var context = CoreConfigTestFactory.CreateContext(config, group, ECoreType.Xray);
+        context.AllProxiesMap[n1.IndexId] = n1;
+        context.AllProxiesMap[n2.IndexId] = n2;
+        context.AllProxiesMap[n3.IndexId] = n3;
+        context.AllProxiesMap[group.IndexId] = group;
+
+        var result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        var cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+        var tags = cfg.outbounds.Where(o => o.tag.StartsWith(Global.ProxyTag + "-")).Select(o => o.tag).ToList();
+        tags.Should().HaveCount(3);
+
+        context = context with
+        {
+            AdaptiveConfig = new AdaptiveConfig
+            {
+                ActiveTags = [],
+                CooldownTags = [tags[1]],
+                ProbePorts = new Dictionary<string, int>(),
+                NodeScores = tags.ToDictionary(t => t, _ => 50.0),
+                TagToIndexId = new Dictionary<string, string>
+                {
+                    [tags[0]] = n1.IndexId,
+                    [tags[1]] = n2.IndexId,
+                    [tags[2]] = n3.IndexId,
+                },
+            }
+        };
+
+        result = new CoreConfigV2rayService(context).GenerateClientConfigContent();
+        result.Success.Should().BeTrue();
+        cfg = JsonUtils.Deserialize<V2rayConfig>(result.Data!.ToString())!;
+
+        var balancer = cfg.routing.balancers!.First(b => b.tag == Global.ProxyTag + Global.BalancerTagSuffix);
+        balancer.selector.Should().Equal([tags[0]],
+            "an empty active-set should fall back to one non-cooldown node, not expose every outbound");
+    }
+
     #endregion
 }
