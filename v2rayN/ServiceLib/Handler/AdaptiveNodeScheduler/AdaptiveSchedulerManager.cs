@@ -105,14 +105,16 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     public IReadOnlyDictionary<string, string> TagToIndexId => _tagToIndexId.AsReadOnly();
 
     /// <summary>
-    /// Returns the current AdaptiveConfig (used to generate xray config).
+    /// Returns the current AdaptiveConfig read-only snapshot.
+    /// Uses cached production/cooldown tags to avoid mutating scheduler state
+    /// when called from UI polling paths (e.g. every-5s QoS refresh).
     /// </summary>
     public AdaptiveConfig? GetCurrentConfig()
     {
         if (_activeSetManager == null) return null;
         return new AdaptiveConfig
         {
-            ActiveTags = _activeSetManager.GetProductionTags(),
+            ActiveTags = _activeSetManager.CurrentProductionTags,
             CooldownTags = _activeSetManager.GetCooldownTags(),
             ProbePorts = _probePorts,
             NodeScores = _nodes.ToDictionary(n => n.Tag, n => n.Score),
@@ -325,6 +327,28 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                 var healthState = (NodeHealthState)ex.AdaptiveHealthState;
                 node.SetHealthState(healthState);
                 healthRestored++;
+
+                // Restore backoff level so cooldown duration survives restarts
+                if (ex.AdaptiveBackoffLevel > 0)
+                {
+                    for (int i = 0; i < ex.AdaptiveBackoffLevel; i++)
+                        node.IncrementBackoffLevel();
+                }
+
+                // Restore recovery probe progress
+                if (ex.AdaptiveHealthState == (int)NodeHealthState.RecoveryProbing
+                    && ex.AdaptiveRecoveryProbeSuccess > 0)
+                {
+                    for (int i = 0; i < ex.AdaptiveRecoveryProbeSuccess; i++)
+                        node.IncrementRecoveryProbeSuccess();
+                }
+
+                // Restore stability verification start time
+                if (ex.AdaptiveHealthState == (int)NodeHealthState.StabilityVerification
+                    && ex.AdaptiveStabilityVerificationStart != default)
+                {
+                    node.MarkStabilityVerificationStarted(ex.AdaptiveStabilityVerificationStart);
+                }
             }
 
             // P2: Restore TrafficTier (0=Production, 1=Standby default → skip)

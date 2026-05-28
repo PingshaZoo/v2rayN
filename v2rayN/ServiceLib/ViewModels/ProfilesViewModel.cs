@@ -393,7 +393,11 @@ public class ProfilesViewModel : MyReactiveObject
                 (int)Math.Round(node.EwmaLatencyMs),
                 node.IsInCooldown,
                 isActive,
-                (int)node.TrafficTier);
+                (int)node.TrafficTier,
+                (int)node.HealthState,
+                node.RecoveryProbeSuccessCount,
+                node.CooldownBackoffLevel,
+                node.StabilityVerificationStartedAt);
         }
         await Task.CompletedTask;
     }

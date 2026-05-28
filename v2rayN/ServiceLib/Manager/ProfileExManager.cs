@@ -150,7 +150,8 @@ public class ProfileExManager
         IndexIdEnqueue(indexId);
     }
 
-    public void SetAdaptiveData(string indexId, int score, int latency, bool cooldown, bool active, int trafficTier = 1)
+    public void SetAdaptiveData(string indexId, int score, int latency, bool cooldown, bool active, int trafficTier = 1,
+        int healthState = 0, int recoveryProbeSuccess = 0, int backoffLevel = 0, DateTime stabilityVerificationStart = default)
     {
         var profileEx = GetProfileExItem(indexId);
         profileEx.AdaptiveScore = score;
@@ -159,6 +160,10 @@ public class ProfileExManager
         profileEx.AdaptiveActive = active ? 1 : 0;
         profileEx.AdaptiveTrafficTier = trafficTier;
         profileEx.AdaptiveLastObserved = DateTime.UtcNow;
+        profileEx.AdaptiveHealthState = healthState;
+        profileEx.AdaptiveRecoveryProbeSuccess = recoveryProbeSuccess;
+        profileEx.AdaptiveBackoffLevel = backoffLevel;
+        profileEx.AdaptiveStabilityVerificationStart = stabilityVerificationStart;
         IndexIdEnqueue(indexId);
     }
 
