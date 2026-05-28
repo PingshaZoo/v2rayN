@@ -125,9 +125,10 @@ public class StatisticsManager
         server.TotalDown = _serverStatItem.TotalDown;
         await _updateFunc?.Invoke(server);
 
-        // Route per-tag traffic to child node statistics rows when adaptive scheduling is active.
+        // Route per-tag traffic to child node statistics rows when tag mapping is available.
+        // Bug 1 fix: decoupled from IsRunning — works in TUN/non-adaptive mode.
         if (server.PerTagProxyTraffic is { Count: > 0 }
-            && AdaptiveSchedulerManager.Instance.IsRunning)
+            && AdaptiveSchedulerManager.Instance.TagToIndexId is { Count: > 0 })
         {
             var tagToIndexId = AdaptiveSchedulerManager.Instance.TagToIndexId;
             if (tagToIndexId is { Count: > 0 })

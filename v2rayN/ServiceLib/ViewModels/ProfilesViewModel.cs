@@ -335,8 +335,8 @@ public class ProfilesViewModel : MyReactiveObject
                 item.TotalDown = Utils.HumanFy(update.TotalDown);
                 item.TotalUp = Utils.HumanFy(update.TotalUp);
 
-                // When adaptive scheduling is active, show per-node real-time throughput in Speed column
-                if (AdaptiveSchedulerManager.Instance.IsRunning)
+                // Show real-time throughput in Speed column whenever traffic data is available.
+                // Bug 1 fix: decoupled from IsRunning — works in TUN/non-adaptive mode.
                 {
                     long totalKbps = update.ProxyUp + update.ProxyDown;
                     if (totalKbps >= 1024)
@@ -400,6 +400,22 @@ public class ProfilesViewModel : MyReactiveObject
                 node.StabilityVerificationStartedAt);
         }
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Compute AdaptiveStatusVal from DB-persisted fields.
+    /// Mirrors the in-memory NodeState logic:
+    ///   Cooldown > HealthState != Active > TrafficTier (Production/Standby).
+    /// </summary>
+    public static string ComputeAdaptiveStatusVal(int adaptiveCooldown, int adaptiveHealthState, int adaptiveTrafficTier)
+    {
+        if (adaptiveCooldown != 0)
+            return "Cooldown";
+        if (adaptiveHealthState != (int)NodeHealthState.Active)
+            return ((NodeHealthState)adaptiveHealthState).ToString();
+        if (adaptiveTrafficTier == (int)TrafficTier.Production)
+            return "Production";
+        return "Standby";
     }
 
     #endregion Actions
@@ -517,8 +533,10 @@ public class ProfilesViewModel : MyReactiveObject
                         AdaptiveLatencyVal = t33?.AdaptiveLatency > 0 ? $"{t33.AdaptiveLatency} ms" : string.Empty,
                         AdaptiveCooldown = (t33?.AdaptiveCooldown ?? 0) != 0,
                         AdaptiveActive = (t33?.AdaptiveActive ?? 0) != 0,
-                        AdaptiveStatusVal = (t33?.AdaptiveCooldown ?? 0) != 0 ? "Cooldown"
-                            : (t33?.AdaptiveActive ?? 0) != 0 ? "Active" : string.Empty,
+                        AdaptiveStatusVal = ComputeAdaptiveStatusVal(
+                            t33?.AdaptiveCooldown ?? 0,
+                            t33?.AdaptiveHealthState ?? 0,
+                            t33?.AdaptiveTrafficTier ?? 1),
                     }).OrderBy(t => t.Sort).ToList();
 
         return lstModel;

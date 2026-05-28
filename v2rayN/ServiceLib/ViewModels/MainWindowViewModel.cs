@@ -634,8 +634,11 @@ public class MainWindowViewModel : MyReactiveObject
     {
         childNodes = [];
 
-        if (profileItem.ConfigType != EConfigType.PolicyGroup) return false;
-        if (!(profileItem.GetProtocolExtra().AdaptiveEnabled ?? false)) return false;
+        if (profileItem.ConfigType != EConfigType.PolicyGroup)
+        {
+            AdaptiveSchedulerManager.Instance.ClearTagMapping();
+            return false;
+        }
 
         var childIds = Utils.String2List(profileItem.GetProtocolExtra().ChildItems);
         if (childIds == null || childIds.Count <= 1) return false;
@@ -646,6 +649,16 @@ public class MainWindowViewModel : MyReactiveObject
                 childNodes[childId] = child;
         }
         if (childNodes.Count <= 1) return false;
+
+        if (!(profileItem.GetProtocolExtra().AdaptiveEnabled ?? false))
+        {
+            // Bug 1 fix: set up tag→IndexId mapping even without adaptive,
+            // so per-node speed display works in TUN/non-adaptive mode.
+            var mapping = AdaptiveSchedulerManager.BuildTagMappingForSpeedDisplay(
+                childNodes.ToDictionary(kv => kv.Key, kv => (kv.Value.Remarks, kv.Key)));
+            AdaptiveSchedulerManager.Instance.ApplyTagMappingForSpeedDisplay(mapping);
+            return false;
+        }
 
         var policyApplier = new ReloadPolicyApplier(
             async (adaptiveConfig) =>

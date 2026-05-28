@@ -75,6 +75,41 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
     private ProtocolExtraItem? _groupAdaptiveSettings;
     /// <summary>v7.6 ReloadCooldown hard floor — minimum interval between xray reloads (§5.1.5).</summary>
     public const int ReloadCooldownMs = 60_000;
+
+    /// <summary>
+    /// Build tag→IndexId mapping for per-node speed display without requiring
+    /// adaptive scheduling to be active (Bug 1 fix). Uses the same tag format
+    /// as BuildNodeStates: proxy-{idx+1}-{Remarks}.
+    /// </summary>
+    public static Dictionary<string, string> BuildTagMappingForSpeedDisplay(
+        Dictionary<string, (string Remarks, string IndexId)> childNodes)
+    {
+        var mapping = new Dictionary<string, string>(StringComparer.Ordinal);
+        int idx = 0;
+        foreach (var (_, node) in childNodes)
+        {
+            mapping[$"{Global.ProxyTag}-{idx + 1}-{node.Remarks}"] = node.IndexId;
+            idx++;
+        }
+        return mapping;
+    }
+
+    /// <summary>
+    /// Store tag→IndexId mapping for per-node speed display (Bug 1 fix).
+    /// Independent of adaptive lifecycle — survives StartProbesAsync/StopAsync.
+    /// </summary>
+    public void ApplyTagMappingForSpeedDisplay(Dictionary<string, string> mapping)
+    {
+        _tagToIndexId = mapping;
+    }
+
+    /// <summary>
+    /// Clear tag→IndexId mapping when switching to a non-PolicyGroup server.
+    /// </summary>
+    public void ClearTagMapping()
+    {
+        _tagToIndexId = new Dictionary<string, string>(StringComparer.Ordinal);
+    }
     private const string _tag = "AdaptiveScheduler";
 
     private AdaptiveSchedulerManager()
@@ -414,8 +449,12 @@ public sealed class AdaptiveSchedulerManager : IAsyncDisposable
                     continue; // skip active-set check this cycle
 
                 case FreezeDecisionType.BlockMutation:
-                    // Freeze still active — skip all mutations, probe continues
-                    continue;
+                    // v7.6 Bug 2 fix: allow active-set check during freeze.
+                    // Cooldown is already blocked by FailureCollector (IsFrozen gate),
+                    // preventing mass ejection. Only nodes with HealthState != Active
+                    // (already dead before freeze) get removed. ReloadCooldown 60s
+                    // prevents reload storms.
+                    break;
 
                 case FreezeDecisionType.Unfreeze:
                 {

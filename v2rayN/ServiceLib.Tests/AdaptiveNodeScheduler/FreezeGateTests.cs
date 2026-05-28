@@ -222,4 +222,66 @@ public class FreezeGateTests
         nodeB.IsInCooldown.Should().BeFalse();
         nodeC.IsInCooldown.Should().BeFalse();
     }
+
+    // ── Bug 2 fix: Active set must still update during freeze ──
+
+    /// <summary>
+    /// During freeze, the ActiveSetManager must still exclude nodes with
+    /// HealthState != Active from the production pool. The freeze blocks
+    /// cooldown entry (preventing mass ejection), but nodes that are already
+    /// in a non-Active HealthState must be removable — otherwise the user's
+    /// network is stuck on dead nodes for the full 60s freeze duration.
+    /// </summary>
+    [Fact]
+    public void DuringFreeze_ProductionTags_ExcludesNonActiveHealthState()
+    {
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 90), // Production, Active
+            CreateNode("B", 85), // Production, but Failed (already dead before freeze)
+            CreateNode("C", 80), // Standby, Active — should be promoted to replace B
+            CreateNode("D", 50), // Standby
+        };
+        nodes[0].SetTrafficTier(TrafficTier.Production);
+        nodes[1].SetTrafficTier(TrafficTier.Production);
+        nodes[1].SetHealthState(NodeHealthState.Failed); // B is dead
+        nodes[1].OverrideProductionPromotedAt(DateTime.UtcNow.AddMinutes(-5)); // MinTenure expired
+
+        var mgr = new ActiveSetManager(nodes);
+        var production = mgr.GetProductionTags();
+
+        // B (HealthState=Failed) must be EXCLUDED from production
+        production.Should().NotContain("B",
+            "dead node (HealthState=Failed) must be excluded even during freeze");
+        // C (score=80 >= Entry=60) should be promoted to replace B
+        production.Should().Contain("C",
+            "healthy Standby node should replace dead Production node even during freeze");
+        production.Count.Should().Be(3, "target for 4 eligible = clamp(ceil(4*0.35)=2,3,6)=3");
+    }
+
+    [Fact]
+    public void DuringFreeze_ProductionTags_ExcludesCooldownNodes()
+    {
+        // Cooldown is blocked during freeze, but if a node somehow entered
+        // cooldown before freeze, it must still be excluded.
+        var nodes = new List<NodeState>
+        {
+            CreateNode("A", 90),
+            CreateNode("B", 85),
+            CreateNode("C", 80),
+            CreateNode("D", 45),
+        };
+        nodes[0].SetTrafficTier(TrafficTier.Production);
+        nodes[0].SetCooldown(DateTime.UtcNow.AddMinutes(5)); // cooldown
+
+        var mgr = new ActiveSetManager(nodes);
+        var production = mgr.GetProductionTags();
+
+        production.Should().NotContain("A",
+            "cooldown nodes excluded regardless of freeze state");
+        // target=3, 3 eligible (B,C,D). B(85),C(80) >= Entry=60 → promoted.
+        // D(45) < FallbackPromotionThreshold(48) → excluded.
+        production.Count.Should().Be(2,
+            "only 2 nodes with score >= 60 for target=3 (D=45 < Fallback=48)");
+    }
 }
