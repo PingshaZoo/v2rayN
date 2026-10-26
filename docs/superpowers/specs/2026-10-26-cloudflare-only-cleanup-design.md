@@ -2,7 +2,7 @@
 
 ## 目标
 
-以当前官方最新 `upstream/master`（`57f17d59`）为基线，保留此前实现的 Cloudflare Best IP 测速功能，同时彻底移除此前提交的负载均衡与 Adaptive Node Scheduler 功能。
+这是从官方 `2dust/v2rayN` fork 出来的仓库。以当前官方最新 `upstream/master`（`57f17d59`）为唯一基线，再从旧 fork `master` 中迁移此前实现的 Cloudflare Best IP 测速功能，同时彻底排除负载均衡与 Adaptive Node Scheduler 功能。
 
 ## 范围
 
@@ -22,8 +22,8 @@
 
 ## 实施方案
 
-1. 从官方最新 `upstream/master` 创建本工作分支。
-2. 按依赖顺序移植 Cloudflare 初始提交 `1579a9a8` 和完善提交 `b4690dcc`，不移植 Adaptive Scheduler 及负载均衡提交。
+1. 从官方最新 `upstream/master` 创建本工作分支，不以旧 fork `master` 作为合并基线。
+2. 以旧 fork `master` 中的 Cloudflare 初始提交 `1579a9a8` 和完善提交 `b4690dcc` 为迁移来源，按依赖顺序将 Cloudflare 功能移植到官方基线；不移植 Adaptive Scheduler 及负载均衡提交。
 3. 处理官方最新代码中的冲突：优先保留官方版本；仅将 Cloudflare 功能所需的最小变更合入共享文件。
 4. 全局搜索并清理残留的 Adaptive/负载均衡符号、资源键、配置字段、UI 绑定和文档引用；Cloudflare 相关引用必须保留。
 5. 运行现有测试和构建校验，重点验证 Cloudflare 配置读写、入口可见性、测速处理链路，以及官方基线未被意外改写。
