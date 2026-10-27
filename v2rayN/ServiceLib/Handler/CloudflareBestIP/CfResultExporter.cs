@@ -1,206 +1,117 @@
 namespace ServiceLib.Handler.CloudflareBestIP;
 
-/// <summary>
-/// 探测结果 → ProfileItem 节点导出器
-/// Probe result → ProfileItem node exporter
-///
-/// 根据用户选择的协议模板（VLESS/VMess/Trojan），将优选 IP 组装为可被 v2rayN 识别的节点配置
-/// Assembles preferred IPs into v2rayN-compatible node configs based on user-selected protocol template
-///
-/// 所有协议共用配置 / Common config for all protocols:
-///   - address = 优选 IP / preferred IP
-///   - port = 443
-///   - network = ws (WebSocket)
-///   - security = tls
-///   - sni = 用户配置的源站域名 / user-configured origin domain
-///   - fingerprint = chrome
-///   - alpn = h2,http/1.1
-/// </summary>
-public class CfResultExporter
+public class CfResultExporter(CfBestIpItem settings)
 {
-    private readonly CfBestIpItem _config;
+    public const string GroupId = "cf-best-ip-generated";
 
-    public CfResultExporter(CfBestIpItem config)
+    public List<ProfileItem> ExportAsProfileItems(IEnumerable<CfProbeResult> topResults, ProfileItem? template = null)
     {
-        _config = config;
+        if (template is not null) ValidateTemplate(template);
+        else ValidateManualCredentials();
+        return topResults.Where(r => CfIpScorer.IsQualified(r, settings))
+            .Select(r => CreateNode(r, template)).ToList();
     }
 
-    /// <summary>
-    /// 将 TOP N 探测结果批量导出为 ProfileItem 节点
-    /// Export TOP N probe results as ProfileItem nodes
-    /// </summary>
-    public List<ProfileItem> ExportAsProfileItems(List<CfProbeResult> topResults)
+    private void ValidateManualCredentials()
     {
-        var nodes = new List<ProfileItem>();
+        if (settings.SelectedProtocol is not ("vless" or "vmess" or "trojan"))
+            throw new ArgumentException(CfUi.T("请选择 VLESS、VMess 或 Trojan 协议。", "Choose VLESS, VMess or Trojan."));
+        if (string.IsNullOrWhiteSpace(settings.Uuid))
+            throw new ArgumentException(CfUi.T("请填写连接凭据，或选择已有 TLS 节点作为模板。", "Enter credentials or select an existing TLS profile."));
+        if (settings.SelectedProtocol is "vless" or "vmess" && !Guid.TryParse(settings.Uuid, out _))
+            throw new ArgumentException(CfUi.T("VLESS / VMess 凭据需要有效 UUID。", "VLESS / VMess require a valid UUID."));
+        if (string.IsNullOrWhiteSpace(settings.WsPath) || !settings.WsPath.StartsWith('/'))
+            throw new ArgumentException(CfUi.T("WebSocket 路径必须以 / 开头。", "The WebSocket path must start with /."));
+    }
 
-        foreach (var result in topResults)
+    public static void ValidateTemplate(ProfileItem template)
+    {
+        if (template.ConfigType is not (EConfigType.VLESS or EConfigType.VMess or EConfigType.Trojan)
+            || template.StreamSecurity != Global.StreamSecurity || !template.IsValid())
+            throw new ArgumentException(CfUi.T("模板必须是有效的 VLESS、VMess 或 Trojan TLS 节点。", "Select a valid VLESS, VMess or Trojan TLS profile."));
+    }
+
+    private ProfileItem CreateNode(CfProbeResult result, ProfileItem? template)
+    {
+        if (template is not null && !string.IsNullOrWhiteSpace(template.Sni)
+            && !string.Equals(template.Sni, result.Sni, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(CfUi.T($"模板 SNI {template.Sni} 与已测速的 {result.Sni} 不一致。",
+                $"Template SNI {template.Sni} does not match tested SNI {result.Sni}."));
+        var node = template is null ? CreateManualNode(result) : JsonUtils.DeepCopy(template)
+            ?? throw new InvalidOperationException(CfUi.T("复制模板失败", "Could not copy the template"));
+        node.IndexId = string.Empty;
+        node.Subid = GroupId;
+        node.Address = result.Ip;
+        node.Port = result.Port;
+        node.Sni = result.Sni;
+        node.Remarks = $"CF {result.Colo} {result.Ip}";
+        node.IsSub = true;
+        return node;
+    }
+
+    private ProfileItem CreateManualNode(CfProbeResult result)
+    {
+        var node = new ProfileItem
         {
-            var node = CreateNodeForProtocol(result);
-            if (node != null) nodes.Add(node);
+            ConfigType = settings.SelectedProtocol switch
+            {
+                "vless" => EConfigType.VLESS,
+                "vmess" => EConfigType.VMess,
+                _ => EConfigType.Trojan,
+            },
+            Address = result.Ip, Port = result.Port,
+            Password = settings.Uuid, Username = settings.Uuid,
+            Network = nameof(ETransport.ws), StreamSecurity = Global.StreamSecurity,
+            Sni = result.Sni, AllowInsecure = "false", Fingerprint = "chrome",
+            Alpn = "h2,http/1.1", IsSub = true, Subid = GroupId
+        };
+        var transport = node.GetTransportExtra();
+        node.SetTransportExtra(transport with { Host = result.Sni, Path = settings.WsPath });
+        var protocol = node.GetProtocolExtra();
+        if (node.ConfigType == EConfigType.VLESS)
+            node.SetProtocolExtra(protocol with { VlessEncryption = Global.None, Flow = string.Empty });
+        else if (node.ConfigType == EConfigType.VMess)
+            node.SetProtocolExtra(protocol with { AlterId = "0", VmessSecurity = Global.DefaultSecurity });
+        return node;
+    }
+
+    public async Task<int> ImportAsync(Config config, CfProbeRunResult run, ProfileItem? template = null,
+        CancellationToken cancellationToken = default)
+    {
+        var nodes = ExportAsProfileItems(run.TopResults, template);
+        if (nodes.Count == 0) return 0;
+        var app = AppManager.Instance;
+        if (await app.GetSubItem(GroupId) is null)
+        {
+            var maxSort = (await app.SubItems())?.Select(item => item.Sort).DefaultIfEmpty(0).Max() ?? 0;
+            var group = new SubItem { Id = GroupId, Remarks = CfUi.T("Cloudflare 优选", "Cloudflare Best IP"), Url = string.Empty,
+                Enabled = false, Sort = maxSort + 1,
+                Memo = CfUi.T("手动测速导入；不会自动更新", "Imported manually; never auto-updated") };
+            await ConfigHandler.AddSubItem(config, group);
         }
-
-        return nodes;
+        var existing = (await app.ProfileItems(GroupId) ?? [])
+            .ToDictionary(n => n.IndexId, StringComparer.Ordinal);
+        var count = 0;
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var node = nodes[i];
+            var result = run.TopResults[i];
+            node.IndexId = StableNodeId(node, template?.IndexId ?? "manual");
+            if (!existing.ContainsKey(node.IndexId))
+            {
+                await ConfigHandler.AddServerCommon(config, node);
+                count++;
+            }
+            ProfileExManager.Instance.SetTestDelay(node.IndexId, (int)Math.Round(result.AvgLatencyMs));
+            ProfileExManager.Instance.SetTestSpeed(node.IndexId, (decimal)(result.DownloadSpeedKBs * 1024 / 1_000_000));
+        }
+        return count;
     }
 
-    /// <summary>
-    /// 根据用户选择的协议创建对应类型的节点
-    /// Create protocol-specific node based on user selection
-    ///
-    /// 支持的协议 / Supported protocols:
-    ///   - vless: VLESS + WebSocket + TLS（默认/default）
-    ///   - vmess: VMess + WebSocket + TLS
-    ///   - trojan: Trojan + WebSocket + TLS
-    /// </summary>
-    /// <param name="result">优选 IP 探测结果 / preferred IP probe result</param>
-    private ProfileItem? CreateNodeForProtocol(CfProbeResult result)
+    public static string StableNodeId(ProfileItem node, string templateId)
     {
-        var protocol = _config.SelectedProtocol?.ToLowerInvariant() ?? "vless";
-        var sniHost = _config.OriginSniList?.FirstOrDefault() ?? result.Ip;
-        var uuid = _config.Uuid.IsNotEmpty() ? _config.Uuid : Utils.GetGuid();
-        var wsPath = _config.WsPath.IsNotEmpty() ? _config.WsPath : "/";
-
-        return protocol switch
-        {
-            "vless" => CreateVlessNode(result, sniHost, uuid, wsPath),
-            "vmess" => CreateVmessNode(result, sniHost, uuid, wsPath),
-            "trojan" => CreateTrojanNode(result, sniHost, uuid, wsPath),
-            _ => CreateVlessNode(result, sniHost, uuid, wsPath),
-        };
-    }
-
-    /// <summary>
-    /// 创建 VLESS + WebSocket + TLS 节点
-    /// VLESS 无需 alterId 和 vmessSecurity，需设置 VlessEncryption = "none"
-    /// </summary>
-    private static ProfileItem CreateVlessNode(CfProbeResult result, string sniHost, string uuid, string wsPath)
-    {
-        var remarks = $"CF-{result.Ip}";
-
-        var node = new ProfileItem
-        {
-            IndexId = string.Empty,
-            ConfigType = EConfigType.VLESS,
-            ConfigVersion = 4,
-            Remarks = remarks,
-            Address = result.Ip,
-            Port = 443,
-            Password = uuid,
-            Username = uuid,
-            Network = nameof(ETransport.ws),
-            StreamSecurity = Global.StreamSecurity,
-            Sni = sniHost,
-            AllowInsecure = "false",
-            Fingerprint = "chrome",
-            Alpn = "h2,http/1.1",
-            IsSub = false,
-        };
-
-        // 传输层配置：WebSocket Host + Path
-        // Transport layer: WebSocket Host + Path
-        var transport = node.GetTransportExtra();
-        transport = transport with
-        {
-            Host = sniHost,
-            Path = wsPath,
-        };
-        node.SetTransportExtra(transport);
-
-        // 协议层配置：VLESS encryption = none
-        // Protocol layer: VLESS encryption = none
-        var proto = node.GetProtocolExtra();
-        proto = proto with
-        {
-            VlessEncryption = Global.None,
-            Flow = string.Empty,
-        };
-        node.SetProtocolExtra(proto);
-
-        return node;
-    }
-
-    /// <summary>
-    /// 创建 VMess + WebSocket + TLS 节点
-    /// VMess 额外需要 alterId=0 和 vmessSecurity=auto
-    /// </summary>
-    private static ProfileItem CreateVmessNode(CfProbeResult result, string sniHost, string uuid, string wsPath)
-    {
-        var remarks = $"CF-{result.Ip}";
-
-        var node = new ProfileItem
-        {
-            IndexId = string.Empty,
-            ConfigType = EConfigType.VMess,
-            ConfigVersion = 4,
-            Remarks = remarks,
-            Address = result.Ip,
-            Port = 443,
-            Password = uuid,
-            Network = nameof(ETransport.ws),
-            StreamSecurity = Global.StreamSecurity,
-            Sni = sniHost,
-            AllowInsecure = "false",
-            Fingerprint = "chrome",
-            Alpn = "h2,http/1.1",
-            IsSub = false,
-        };
-
-        var transport = node.GetTransportExtra();
-        transport = transport with
-        {
-            Host = sniHost,
-            Path = wsPath,
-        };
-        node.SetTransportExtra(transport);
-
-        // VMess 特有字段：alterId 和 security
-        // VMess-specific fields: alterId and security
-        var proto = node.GetProtocolExtra();
-        proto = proto with
-        {
-            AlterId = "0",
-            VmessSecurity = Global.DefaultSecurity,
-        };
-        node.SetProtocolExtra(proto);
-
-        return node;
-    }
-
-    /// <summary>
-    /// 创建 Trojan + WebSocket + TLS 节点
-    /// Trojan 协议无额外字段，仅 password 不同
-    /// </summary>
-    private static ProfileItem CreateTrojanNode(CfProbeResult result, string sniHost, string uuid, string wsPath)
-    {
-        var remarks = $"CF-{result.Ip}";
-
-        var node = new ProfileItem
-        {
-            IndexId = string.Empty,
-            ConfigType = EConfigType.Trojan,
-            ConfigVersion = 4,
-            Remarks = remarks,
-            Address = result.Ip,
-            Port = 443,
-            Password = uuid,
-            Network = nameof(ETransport.ws),
-            StreamSecurity = Global.StreamSecurity,
-            Sni = sniHost,
-            AllowInsecure = "false",
-            Fingerprint = "chrome",
-            Alpn = "h2,http/1.1",
-            IsSub = false,
-        };
-
-        var transport = node.GetTransportExtra();
-        transport = transport with
-        {
-            Host = sniHost,
-            Path = wsPath,
-        };
-        node.SetTransportExtra(transport);
-
-        // Trojan 无额外协议字段 / Trojan has no extra protocol fields
-
-        return node;
+        var identity = $"{templateId}|{node.ConfigType}|{node.Address}|{node.Port}|{node.Sni}|{node.Network}|{node.StreamSecurity}|{node.Password}|{JsonSerializer.Serialize(node.GetTransportExtra())}";
+        return "cf-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..24];
     }
 }

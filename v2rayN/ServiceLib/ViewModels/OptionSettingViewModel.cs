@@ -117,27 +117,6 @@ public partial class OptionSettingViewModel : MyReactiveObject, ICloseable
 
     #endregion CoreType
 
-    #region Cloudflare Best IP
-
-    [Reactive] public partial string CfPostUrls { get; set; }
-    [Reactive] public partial string CfDomainsSetUrl { get; set; }
-    [Reactive] public partial string CfHavePostRes { get; set; }
-    [Reactive] public partial string CfIpSetUrls { get; set; }
-    [Reactive] public partial string CfOriginSniList { get; set; }
-    [Reactive] public partial string CfOriginTestPath { get; set; }
-    [Reactive] public partial string CfOriginSpeedTestPath { get; set; }
-    [Reactive] public partial string CfSelectedProtocol { get; set; }
-    [Reactive] public partial string CfProbeMode { get; set; }
-    [Reactive] public partial int CfTopN { get; set; }
-    [Reactive] public partial int CfLowestSpeed { get; set; }
-    [Reactive] public partial int CfTimeout { get; set; }
-    [Reactive] public partial int CfProbeRepeat { get; set; }
-    [Reactive] public partial double CfWeightLatency { get; set; }
-    [Reactive] public partial double CfWeightLoss { get; set; }
-    [Reactive] public partial string CfUuid { get; set; }
-    [Reactive] public partial string CfWsPath { get; set; }
-
-    #endregion Cloudflare Best IP
 
     public ReactiveCommand<RxVoid, RxVoid> SaveCmd { get; }
 
@@ -192,25 +171,6 @@ public partial class OptionSettingViewModel : MyReactiveObject, ICloseable
         FragmentDelays = Utils.List2String(_config.Fragment4RayItem?.Delays);
         FragmentMaxSplit = _config.Fragment4RayItem?.MaxSplit;
 
-        // Cloudflare Best IP
-        var cf = _config.CfBestIpItem ?? new();
-        CfPostUrls = string.Join("\n", cf.PostUrls ?? []);
-        CfDomainsSetUrl = cf.DomainsSetUrl ?? string.Empty;
-        CfHavePostRes = string.Join("\n", cf.HavePostRes ?? []);
-        CfIpSetUrls = string.Join("\n", cf.IpSetUrls ?? []);
-        CfOriginSniList = string.Join("\n", cf.OriginSniList ?? []);
-        CfOriginTestPath = cf.OriginTestPath ?? string.Empty;
-        CfOriginSpeedTestPath = cf.OriginSpeedTestPath ?? string.Empty;
-        CfSelectedProtocol = cf.SelectedProtocol ?? "vless";
-        CfProbeMode = cf.ProbeMode ?? "full";
-        CfTopN = cf.TopN;
-        CfLowestSpeed = cf.LowestSpeed;
-        CfTimeout = cf.Timeout;
-        CfProbeRepeat = cf.ProbeRepeat;
-        CfWeightLatency = cf.WeightLatency;
-        CfWeightLoss = cf.WeightLoss;
-        CfUuid = cf.Uuid ?? string.Empty;
-        CfWsPath = cf.WsPath ?? "/";
 
         #endregion Core
 
@@ -395,24 +355,6 @@ public partial class OptionSettingViewModel : MyReactiveObject, ICloseable
         _config.Fragment4RayItem.Delays = fragmentDelays;
         _config.Fragment4RayItem.MaxSplit = FragmentMaxSplit;
 
-        _config.CfBestIpItem ??= new();
-        _config.CfBestIpItem.PostUrls = CfPostUrls.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.IsNotEmpty()).ToList();
-        _config.CfBestIpItem.DomainsSetUrl = CfDomainsSetUrl.TrimEx();
-        _config.CfBestIpItem.HavePostRes = CfHavePostRes.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.IsNotEmpty()).ToList();
-        _config.CfBestIpItem.IpSetUrls = CfIpSetUrls.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.IsNotEmpty()).ToList();
-        _config.CfBestIpItem.OriginSniList = CfOriginSniList.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.IsNotEmpty()).ToList();
-        _config.CfBestIpItem.OriginTestPath = CfOriginTestPath.TrimEx();
-        _config.CfBestIpItem.OriginSpeedTestPath = CfOriginSpeedTestPath.TrimEx();
-        _config.CfBestIpItem.SelectedProtocol = CfSelectedProtocol;
-        _config.CfBestIpItem.ProbeMode = CfProbeMode;
-        _config.CfBestIpItem.TopN = CfTopN;
-        _config.CfBestIpItem.LowestSpeed = CfLowestSpeed;
-        _config.CfBestIpItem.Timeout = CfTimeout;
-        _config.CfBestIpItem.ProbeRepeat = CfProbeRepeat;
-        _config.CfBestIpItem.WeightLatency = CfWeightLatency;
-        _config.CfBestIpItem.WeightLoss = CfWeightLoss;
-        _config.CfBestIpItem.Uuid = CfUuid.TrimEx();
-        _config.CfBestIpItem.WsPath = CfWsPath.TrimEx();
 
         _config.GuiItem.AutoRun = AutoRun;
         _config.GuiItem.EnableStatistics = EnableStatistics;

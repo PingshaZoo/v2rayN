@@ -765,17 +765,9 @@ public partial class MainWindowViewModel : MyReactiveObject
     private async Task RunCloudflareBestIpAsync()
     {
         if (_config == null) return;
-
-        try
-        {
-            SetReloadEnabled(false);
-            await CfBestIpHandler.Instance.RunAsync(_config, (notify, msg) => _ = UpdateHandler(notify, msg));
-        }
-        finally
-        {
-            SetReloadEnabled(true);
-            await RefreshServers();
-        }
+        var vm = new CloudflareBestIpViewModel(_config);
+        await AppManager.Instance.WindowDialog.ShowDialogAsync(vm);
+        if (vm.Imported) await RefreshServers();
     }
 
     private void ReloadResult(bool showClashUI)

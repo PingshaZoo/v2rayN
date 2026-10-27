@@ -791,32 +791,6 @@ public class Global
         "fc00::10:0:0:1/126",
     ];
 
-    public static readonly List<string> CfBestIpDefaultPostUrls =
-    [
-        "https://pingshaisland.top/api/domains/dell",
-        "https://la.pingshaisland.top/api/domains/dell",
-    ];
-
-    public static readonly List<string> CfBestIpDefaultHavePostRes =
-    [
-        "https://la.pingshaisland.top/api/domains/dell",
-        "https://la.pingshaisland.top/api/domains/shayuan",
-        "https://la.pingshaisland.top/api/domains/cgb",
-        "https://la.pingshaisland.top/api/domains/jujule",
-        "https://la.pingshaisland.top/api/domains/iphone",
-    ];
-
-    public static readonly List<string> CfBestIpDefaultIpSetUrls =
-    [
-        "https://www.wetest.vip/page/cloudflare/address_v4.html",
-        "https://www.wetest.vip/page/cloudflare/total_v4.html",
-        "https://www.wetest.vip/page/cloudflare/colo.html",
-        "https://api.uouin.com/cloudflare.html",
-        "https://v2rayssr.com/cfip/",
-        "https://api.4ce.cn/api/bestCFIP",
-        "https://vps789.com/public/sum/cfIpApi",
-    ];
-
     public static readonly List<string> CfDefaultIpv4Cidrs =
     [
         "103.21.244.0/22",

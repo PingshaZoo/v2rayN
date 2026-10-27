@@ -1,0 +1,54 @@
+namespace ServiceLib.Handler.CloudflareBestIP;
+
+public static class CfUi
+{
+    private static bool Zh => System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh";
+    public static string T(string chinese, string english) => Zh ? chinese : english;
+    public static string Description => Zh ? "直连 Cloudflare IP 测试；域名、测试路径和数据源由你填写。测速结果需手动导入。" : "Probe Cloudflare IPs directly. Supply your own hostname, paths and sources. Import results manually.";
+    public static string ProbeTab => Zh ? "测速" : "Probe";
+    public static string SourcesTab => Zh ? "数据源" : "Sources";
+    public static string ImportTab => Zh ? "导入" : "Import";
+    public static string AdvancedTab => Zh ? "高级" : "Advanced";
+    public static string Sni => Zh ? "SNI 域名（每行一个）" : "SNI hostnames (one per line)";
+    public static string TestPath => Zh ? "测速路径（应返回 HTTP 200）" : "Latency path (must return HTTP 200)";
+    public static string SpeedPath => Zh ? "下载路径（未压缩文件）" : "Download path (uncompressed file)";
+    public static string Mode => Zh ? "模式" : "Mode";
+    public static string LowestSpeed => Zh ? "最低速度（KB/s）" : "Minimum speed (KB/s)";
+    public static string VerifyCert => Zh ? "验证源站 TLS 证书" : "Verify TLS certificate";
+    public static string ModeHelp => Zh ? "full 模式测 TCP、TLS、HTTP；edge 模式仅通过 /cdn-cgi/trace 探测延迟。" : "Full mode measures TCP, TLS and HTTP. Edge mode measures latency using /cdn-cgi/trace.";
+    public static string HistoricalUrls => Zh ? "历史结果 URL（每行一个）" : "Historical result URLs (one per line)";
+    public static string IpUrls => Zh ? "IP 列表 URL（每行一个）" : "IP list URLs (one per line)";
+    public static string DomainsUrl => Zh ? "域名列表 URL" : "Domain list URL";
+    public static string PostUrls => Zh ? "上报 URL（每行一个，仅点击“上报”后发送）" : "Report URLs (one per line; sent only when you click Report)";
+    public static string SourceHelp => Zh ? "默认仅内置公开的 Cloudflare IPv4 网段。以上 URL 不随程序预填。" : "Only public Cloudflare IPv4 ranges are built in. These URLs are not prefilled.";
+    public static string Template => Zh ? "复用已有 TLS 节点" : "Use an existing TLS profile";
+    public static string TemplateHelp => Zh ? "模板保留协议、密码与传输配置，仅改 IP、端口和已测速的 SNI。模板 SNI 必须与测速域名一致。" : "The template retains its protocol, credentials and transport. Only IP, port and tested SNI change. Its SNI must match a tested hostname.";
+    public static string ManualTitle => Zh ? "或手动创建 WebSocket + TLS 节点" : "Or create a WebSocket + TLS profile manually";
+    public static string Protocol => Zh ? "协议" : "Protocol";
+    public static string Credential => Zh ? "UUID / Trojan 密码" : "UUID / Trojan password";
+    public static string WsPath => Zh ? "WebSocket 路径" : "WebSocket path";
+    public static string CredentialHelp => Zh ? "凭据不会自动生成；只有点击“导入节点”才会写入。" : "Credentials are never generated. Profiles are written only when you click Import profiles.";
+    public static string Timeout => Zh ? "连接超时（秒）" : "Connection timeout (seconds)";
+    public static string Repeat => Zh ? "重复次数 / 每个 SNI" : "Repeats per SNI";
+    public static string Duration => Zh ? "单次下载上限（秒）" : "Download limit (seconds)";
+    public static string Interval => Zh ? "探测间隔（秒）" : "Interval between probes (seconds)";
+    public static string LatencyWeight => Zh ? "延迟权重" : "Latency weight";
+    public static string LossWeight => Zh ? "丢包权重" : "Loss weight";
+    public static string Colo => Zh ? "节点" : "Colo";
+    public static string Latency => Zh ? "延迟 ms" : "Latency ms";
+    public static string Speed => Zh ? "速度 KB/s" : "Speed KB/s";
+    public static string Loss => Zh ? "丢包" : "Loss";
+    public static string Status => Zh ? "状态" : "Status";
+    public static string Source => Zh ? "来源" : "Source";
+    public static string Save => Zh ? "保存配置" : "Save settings";
+    public static string Start => Zh ? "开始测速" : "Start probe";
+    public static string Stop => Zh ? "停止" : "Stop";
+    public static string ImportNodes => Zh ? "导入节点" : "Import profiles";
+    public static string Post => Zh ? "上报" : "Report";
+    public static string Close => Zh ? "关闭" : "Close";
+    public static string ManualTemplate => Zh ? "手动填写连接凭据" : "Enter credentials manually";
+    public static string InitialStatus => Zh ? "填写测速域名、路径与数据源，然后开始测速。" : "Enter a hostname, paths and sources, then start the probe.";
+    public static string Qualified => Zh ? "合格" : "Qualified";
+    public static string NotQualified => Zh ? "未达标" : "Below target";
+    public static string NotTested => Zh ? "未测速" : "Not tested";
+}

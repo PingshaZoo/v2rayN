@@ -21,21 +21,13 @@
 - Routing rules and DNS configuration
 - Speed and latency testing
 - TUN mode support
-- **Cloudflare Best IP** — automatically probe and select optimal Cloudflare CDN IPs
+- **Cloudflare Best IP** — probe Cloudflare CDN IPs and import qualified nodes on demand
 
 ## Cloudflare Best IP
 
-One-click Cloudflare CDN node optimization:
+Open "Cloudflare Best IP" from the menu. Supply your own SNI hostname, test paths, and IP/domain sources; only public Cloudflare IPv4 ranges are built in. Start or stop the probe in its own window and inspect the ranked results.
 
-1. Configure probe parameters in Settings (origin SNI, test paths, data source URLs)
-2. Click "Cloudflare Best IP" from the menu
-3. The two-phase pipeline automatically:
-   - Fetches historical best IPs and general IP sources
-   - Probes TCP+TLS+HTTP latency and download speed with Chrome fingerprint
-   - Scores and ranks results (speed-passed IPs get top scores)
-   - Exports optimized nodes and adds them to the `[CF优选]` group
-   - POSTs all probe results to configured report URLs
-4. Select any node from the `[CF优选]` group to start using the optimized Cloudflare connection
+Probing needs no proxy-node credentials. To use a qualified IP, choose an existing TLS profile or enter your own credentials, then click **Import profiles**. Results are sent to your report URL only when you click **Report**. See the [Cloudflare Best IP guide](docs/cloudflare-best-ip.md) for formats and troubleshooting.
 
 
 ---

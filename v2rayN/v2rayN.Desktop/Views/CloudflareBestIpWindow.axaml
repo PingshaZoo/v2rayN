@@ -1,0 +1,90 @@
+<Window
+    x:Class="v2rayN.Desktop.Views.CloudflareBestIpWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:resx="clr-namespace:ServiceLib.Resx;assembly=ServiceLib"
+    xmlns:cfui="clr-namespace:ServiceLib.Handler.CloudflareBestIP;assembly=ServiceLib"
+    xmlns:vms="clr-namespace:ServiceLib.ViewModels;assembly=ServiceLib"
+    x:DataType="vms:CloudflareBestIpViewModel"
+    Title="{x:Static resx:ResUI.menuCloudflareBestIp}"
+    Width="1120" Height="760" MinWidth="900" MinHeight="610"
+    WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+>
+    <Grid Margin="16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Margin="0,0,0,12" FontSize="14" Text="{x:Static cfui:CfUi.Description}" TextWrapping="Wrap"/>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="360"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TabControl Grid.Column="0">
+                <TabItem Header="{x:Static cfui:CfUi.ProbeTab}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="10">
+                        <TextBlock Text="{x:Static cfui:CfUi.Sni}" Margin="0,4"/><TextBox Text="{Binding SniText}" Height="78" AcceptsReturn="True" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.TestPath}" Margin="0,12,0,4"/><TextBox Text="{Binding TestPath}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.SpeedPath}" Margin="0,12,0,4"/><TextBox Text="{Binding SpeedPath}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.Mode}" Margin="0,12,0,4"/><ComboBox ItemsSource="{Binding Modes}" SelectedItem="{Binding ProbeMode}"/>
+                        <TextBlock Text="Top N" Margin="0,12,0,4"/><TextBox Text="{Binding TopN}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.LowestSpeed}" Margin="0,12,0,4"/><TextBox Text="{Binding LowestSpeed}"/>
+                        <CheckBox Margin="0,14,0,0" Content="{x:Static cfui:CfUi.VerifyCert}" IsChecked="{Binding VerifyCertificate}"/>
+                        <TextBlock Margin="0,8,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{x:Static cfui:CfUi.ModeHelp}"/>
+                    </StackPanel></ScrollViewer>
+                </TabItem>
+                <TabItem Header="{x:Static cfui:CfUi.SourcesTab}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="10">
+                        <TextBlock Text="{x:Static cfui:CfUi.HistoricalUrls}" Margin="0,4"/><TextBox Text="{Binding HistoricalUrls}" Height="75" AcceptsReturn="True" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.IpUrls}" Margin="0,12,0,4"/><TextBox Text="{Binding IpSetUrls}" Height="75" AcceptsReturn="True" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.DomainsUrl}" Margin="0,12,0,4"/><TextBox Text="{Binding DomainsUrl}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.PostUrls}" Margin="0,12,0,4" TextWrapping="Wrap"/><TextBox Text="{Binding PostUrls}" Height="75" AcceptsReturn="True" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Margin="0,12,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{x:Static cfui:CfUi.SourceHelp}"/>
+                    </StackPanel></ScrollViewer>
+                </TabItem>
+                <TabItem Header="{x:Static cfui:CfUi.ImportTab}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="10">
+                        <TextBlock Text="{x:Static cfui:CfUi.Template}" Margin="0,4"/><ComboBox ItemsSource="{Binding Templates}" SelectedItem="{Binding SelectedTemplate}"/>
+                        <TextBlock Margin="0,10,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{x:Static cfui:CfUi.TemplateHelp}"/>
+                        <Separator Margin="0,14"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.ManualTitle}" FontWeight="SemiBold"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.Protocol}" Margin="0,12,0,4"/><ComboBox ItemsSource="{Binding Protocols}" SelectedItem="{Binding SelectedProtocol}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.Credential}" Margin="0,12,0,4"/><TextBox Text="{Binding Credential}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.WsPath}" Margin="0,12,0,4"/><TextBox Text="{Binding WsPath}"/>
+                        <TextBlock Margin="0,12,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{x:Static cfui:CfUi.CredentialHelp}"/>
+                    </StackPanel></ScrollViewer>
+                </TabItem>
+                <TabItem Header="{x:Static cfui:CfUi.AdvancedTab}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="10">
+                        <TextBlock Text="{x:Static cfui:CfUi.Timeout}" Margin="0,4"/><TextBox Text="{Binding Timeout}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.Repeat}" Margin="0,12,0,4"/><TextBox Text="{Binding ProbeRepeat}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.Duration}" Margin="0,12,0,4"/><TextBox Text="{Binding SpeedTestDuration}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.Interval}" Margin="0,12,0,4"/><TextBox Text="{Binding SleepInterval}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.LatencyWeight}" Margin="0,12,0,4"/><TextBox Text="{Binding WeightLatency}"/>
+                        <TextBlock Text="{x:Static cfui:CfUi.LossWeight}" Margin="0,12,0,4"/><TextBox Text="{Binding WeightLoss}"/>
+                    </StackPanel></ScrollViewer>
+                </TabItem>
+            </TabControl>
+            <DataGrid Grid.Column="2" ItemsSource="{Binding Results}" AutoGenerateColumns="False" IsReadOnly="True" CanUserSortColumns="True"
+                      HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="IP" Binding="{Binding Ip}" Width="105"/>
+                    <DataGridTextColumn Header="SNI" Binding="{Binding Sni}" Width="105"/>
+                    <DataGridTextColumn Header="{x:Static cfui:CfUi.Colo}" Binding="{Binding Colo}" Width="65"/>
+                    <DataGridTextColumn Header="{x:Static cfui:CfUi.Latency}" Binding="{Binding AvgLatencyMs, StringFormat=F1}" Width="86"/>
+                    <DataGridTextColumn Header="{x:Static cfui:CfUi.Speed}" Binding="{Binding DownloadSpeedKBs, StringFormat=F0}" Width="90"/>
+                    <DataGridTextColumn Header="{x:Static cfui:CfUi.Loss}" Binding="{Binding HttpLossRate, StringFormat=P0}" Width="58"/>
+                    <DataGridTextColumn Header="{x:Static cfui:CfUi.Status}" Binding="{Binding Status}" Width="60"/>
+                    <DataGridTextColumn Header="{x:Static cfui:CfUi.Source}" Binding="{Binding Source}" Width="100"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+        <StackPanel Grid.Row="2" Margin="0,12,0,8">
+            <ProgressBar Minimum="0" Maximum="100" Value="{Binding ProgressPercent}" IsIndeterminate="{Binding IsRunning}" Height="6"/>
+            <TextBlock Margin="0,8,0,0" Text="{Binding StatusText}" TextWrapping="Wrap"/>
+        </StackPanel>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnSave" Content="{x:Static cfui:CfUi.Save}" MinWidth="85" Margin="4"/>
+            <Button x:Name="btnStart" Content="{x:Static cfui:CfUi.Start}" MinWidth="85" Margin="4"/>
+            <Button x:Name="btnStop" Content="{x:Static cfui:CfUi.Stop}" IsEnabled="{Binding IsRunning}" MinWidth="70" Margin="4"/>
+            <Button x:Name="btnImport" Content="{x:Static cfui:CfUi.ImportNodes}" MinWidth="85" Margin="4"/>
+            <Button x:Name="btnPost" Content="{x:Static cfui:CfUi.Post}" MinWidth="70" Margin="4"/>
+            <Button x:Name="btnClose" Content="{x:Static cfui:CfUi.Close}" MinWidth="70" Margin="4"/>
+        </StackPanel>
+    </Grid>
+</Window>

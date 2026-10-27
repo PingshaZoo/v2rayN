@@ -107,6 +107,7 @@
                     </MenuItem>
 
                     <MenuItem x:Name="menuReload" Header="{x:Static resx:ResUI.menuReload}" />
+                    <MenuItem x:Name="menuCloudflareBestIp" Header="{x:Static resx:ResUI.menuCloudflareBestIp}" />
 
                     <MenuItem x:Name="menuPromotion" Header="{x:Static resx:ResUI.menuPromotion}" />
 

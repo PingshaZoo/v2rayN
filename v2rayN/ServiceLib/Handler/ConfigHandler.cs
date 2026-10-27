@@ -188,11 +188,12 @@ public static class ConfigHandler
         }
 
         config.CfBestIpItem ??= new();
-        config.CfBestIpItem.PostUrls ??= Global.CfBestIpDefaultPostUrls;
-        config.CfBestIpItem.HavePostRes ??= Global.CfBestIpDefaultHavePostRes;
-        config.CfBestIpItem.IpSetUrls ??= Global.CfBestIpDefaultIpSetUrls;
+        config.CfBestIpItem.PostUrls ??= [];
+        config.CfBestIpItem.HavePostRes ??= [];
+        config.CfBestIpItem.IpSetUrls ??= [];
         config.CfBestIpItem.OriginSniList ??= [];
-        config.CfBestIpItem.CfDefaultIpv4Cidrs ??= Global.CfDefaultIpv4Cidrs;
+        if (config.CfBestIpItem.CfDefaultIpv4Cidrs is not { Count: > 0 })
+            config.CfBestIpItem.CfDefaultIpv4Cidrs = [.. Global.CfDefaultIpv4Cidrs];
         config.CfBestIpItem.WsPath ??= "/";
         if (config.CfBestIpItem.ProbeRepeat < 1)
         {

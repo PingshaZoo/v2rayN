@@ -3,6 +3,20 @@
 ###############################################################################
 * text=auto
 
+# New Cloudflare tooling and documentation use UTF-8/LF without changing legacy files.
+docs/cloudflare-best-ip.md text eol=lf
+docs/superpowers/specs/2026-10-26-cloudflare-probe-repair-design.md text eol=lf
+v2rayN/ServiceLib.Tests/Handler/CloudflareBestIpTests.cs text eol=lf
+v2rayN/ServiceLib.Tests/Handler/CloudflareProbeHttpTests.cs text eol=lf
+v2rayN/ServiceLib/Handler/CloudflareBestIP/CfProbeModels.cs text eol=lf
+v2rayN/ServiceLib/Handler/CloudflareBestIP/CfProbeValidation.cs text eol=lf
+v2rayN/ServiceLib/Handler/CloudflareBestIP/CfUi.cs text eol=lf
+v2rayN/ServiceLib/ViewModels/CloudflareBestIpViewModel.cs text eol=lf
+v2rayN/v2rayN.Desktop/Views/CloudflareBestIpWindow.axaml text eol=lf
+v2rayN/v2rayN.Desktop/Views/CloudflareBestIpWindow.axaml.cs text eol=lf
+v2rayN/v2rayN/Views/CloudflareBestIpWindow.xaml text eol=lf
+v2rayN/v2rayN/Views/CloudflareBestIpWindow.xaml.cs text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

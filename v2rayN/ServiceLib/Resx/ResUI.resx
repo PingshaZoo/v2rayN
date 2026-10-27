@@ -1966,7 +1966,7 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
     <value>Run Cloudflare Probe</value>
   </data>
   <data name="TbCfBestIpRunTip" xml:space="preserve">
-    <value>Start probing Cloudflare CDN IPs and add optimized results to CF优选 group</value>
+    <value>Probe Cloudflare CDN IPs, then import qualified results manually</value>
   </data>
   <data name="FillCfBestIpOriginSniList" xml:space="preserve">
     <value>Please fill in the Origin SNI List (at least one domain)</value>

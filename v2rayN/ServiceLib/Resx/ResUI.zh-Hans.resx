@@ -1958,7 +1958,7 @@
     <value>运行Cloudflare优选</value>
   </data>
   <data name="TbCfBestIpRunTip" xml:space="preserve">
-    <value>开始探测Cloudflare CDN优选IP，将结果自动添加到CF优选分组</value>
+    <value>探测 Cloudflare CDN IP；达标结果需手动导入</value>
   </data>
   <data name="FillCfBestIpOriginSniList" xml:space="preserve">
     <value>请填写源站域名列表（至少一个）</value>

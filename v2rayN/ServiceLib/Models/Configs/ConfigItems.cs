@@ -309,12 +309,14 @@ public class CfBestIpItem
     public string DomainsSetUrl { get; set; }
     public List<string> HavePostRes { get; set; } = [];
     public List<string> IpSetUrls { get; set; } = [];
-    public int SleepInterval { get; set; } = 1;
-    public int Timeout { get; set; } = 2;
+    public int SleepInterval { get; set; } = 3;
+    public int Timeout { get; set; } = 7;
     public int ProbeRepeat { get; set; } = 2;
     public int ProgInterval { get; set; } = 10;
     public int TopN { get; set; } = 10;
-    public int LowestSpeed { get; set; } = 1000;
+    public int LowestSpeed { get; set; } = 500;
+    public int SpeedTestDuration { get; set; } = 10;
+    public string TemplateIndexId { get; set; } = string.Empty;
     public double WeightLatency { get; set; } = 1;
     public double WeightLoss { get; set; } = 1;
     public double LossPenaltyMs { get; set; } = 3000;

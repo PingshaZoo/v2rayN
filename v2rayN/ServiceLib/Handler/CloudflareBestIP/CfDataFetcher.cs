@@ -12,22 +12,27 @@ namespace ServiceLib.Handler.CloudflareBestIP;
 /// CIDR 过滤使用手动位运算（无外部 NuGet 依赖）
 /// CIDR filtering uses manual bit operations (no external NuGet dependency)
 /// </summary>
-public class CfDataFetcher
+public class CfDataFetcher : IDisposable
 {
     private readonly CfBestIpItem _config;
     private readonly HttpClient _httpClient;
+    private readonly bool _ownsClient;
+    private readonly object _cidrLock = new();
+    private Task<List<string>>? _cidrsTask;
 
     // 预编译正则：匹配 IPv4 地址 / compiled regex: match IPv4 addresses
     private static readonly Regex _ipRegex = new(
         @"\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))\b",
         RegexOptions.Compiled);
 
-    public CfDataFetcher(CfBestIpItem config)
+    public CfDataFetcher(CfBestIpItem config, HttpClient? httpClient = null)
     {
         _config = config;
-        _httpClient = new HttpClient();
-        _httpClient.Timeout = TimeSpan.FromSeconds(30);
+        _ownsClient = httpClient is null;
+        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
     }
+
+    public void Dispose() { if (_ownsClient) _httpClient.Dispose(); }
 
     // ══════════════════════════════════════════════════════════════════════
     // Phase 1: 历史优选 IP（HavePostRes JSON 反序列化）
@@ -44,85 +49,53 @@ public class CfDataFetcher
     /// JSON 格式 / format: [{"ip":"...","score":1.5,"speed_kb_s":8500,"colo":"HKG",...}, ...]
     /// </summary>
     /// <returns>按 score 升序排列的 IP 列表 / IP list sorted by score ascending</returns>
-    public async Task<List<CfIpSource>> FetchHistoricalIpsAsync(Action<string>? onProgress = null)
+    public async Task<List<CfIpSource>> FetchHistoricalIpsAsync(Action<string>? onProgress = null,
+        CancellationToken cancellationToken = default)
     {
-        var urls = _config.HavePostRes.Where(u => u.IsNotEmpty()).ToList();
-        if (urls.Count == 0)
-        {
-            onProgress?.Invoke("Phase 1: HavePostRes is empty, skipping.");
-            return [];
-        }
-
-        // 并发拉取所有 HavePostRes URL + POST_URLS（去重），反序列化 JSON
-        // Concurrently fetch all HavePostRes URLs (merged with POST_URLS, deduped)
-        var allUrls = urls.Union(_config.PostUrls ?? []).Distinct().ToList();
-        var allItems = new List<CfHistoricalIpItem>();
-
-        var fetches = allUrls.Select(async url =>
+        var urls = (_config.HavePostRes ?? []).Concat(_config.PostUrls ?? [])
+            .Where(CfProbeValidation.IsHttpUrl).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (urls.Count == 0) return [];
+        var cidrs = await GetCfCidrsAsync(cancellationToken);
+        var downloads = urls.Select(async url =>
         {
             try
             {
-                var content = await _httpClient.GetStringAsync(url);
-                var json = JsonNode.Parse(content);
-                if (json is JsonArray arr)
+                var content = await _httpClient.GetStringAsync(url, cancellationToken);
+                var array = JsonNode.Parse(content) as JsonArray;
+                var items = new List<CfHistoricalIpItem>();
+                if (array is null) return items;
+                foreach (var row in array)
                 {
-                    var items = new List<CfHistoricalIpItem>();
-                    foreach (var item in arr)
+                    try
                     {
-                        var ip = item?["ip"]?.GetValue<string>();
-                        if (ip.IsNullOrEmpty()) continue;
-                        items.Add(new CfHistoricalIpItem
-                        {
-                            Ip = ip,
-                            Score = item?["score"]?.GetValue<double>() ?? 999999,
-                            SpeedKbS = item?["speed_kb_s"]?.GetValue<double>() ?? 0,
-                            Colo = item?["colo"]?.GetValue<string>(),
-                            SourceUrl = url,
-                        });
+                        var ip = row?["ip"]?.ToString();
+                        if (!IsIpv4(ip)) continue;
+                        var rawSpeed = row?["speed_kb_s"]?.ToString();
+                        var speed = double.TryParse(rawSpeed, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+                            && double.IsFinite(parsed) && parsed > 0 ? parsed : 0;
+                        items.Add(new CfHistoricalIpItem { Ip = ip!, SpeedKbS = speed, SourceUrl = url });
                     }
-                    onProgress?.Invoke($"  HavePostRes: {url} → {items.Count} items");
-                    return items;
+                    catch { /* One malformed row must not discard the feed. */ }
                 }
+                onProgress?.Invoke($"{url}: {items.Count} 条历史结果");
+                return items;
             }
-            catch { }
-            return new List<CfHistoricalIpItem>();
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex) { onProgress?.Invoke($"{url}: {ex.Message}"); return []; }
         });
-
-        var results = await Task.WhenAll(fetches);
-        foreach (var items in results)
-            allItems.AddRange(items);
-
-        if (allItems.Count == 0)
-        {
-            onProgress?.Invoke("Phase 1: no historical IPs found from HavePostRes URLs.");
-            return [];
-        }
-
-        // 按 IP 去重：同一 IP 保留 score 最低的记录（对标 Python 版 _dedup_by_best_score）
-        // Deduplicate by IP: keep the lowest score for each IP
-        var bestByIp = new Dictionary<string, CfHistoricalIpItem>();
-        foreach (var item in allItems)
-        {
-            if (!bestByIp.TryGetValue(item.Ip, out var existing) || item.Score < existing.Score)
-                bestByIp[item.Ip] = item;
-        }
-
-        // 按 score 升序排序（score 越低越好，最快的 IP score=1）
-        // Sort by score ascending (lower is better, fastest IP has score=1)
-        var sorted = bestByIp.Values.OrderBy(x => x.Score).ToList();
-
-        onProgress?.Invoke($"  HavePostRes: {allItems.Count} raw → {sorted.Count} unique IPs (sorted by score)");
-
-        // 输出前 10 个 IP 的历史成绩供参考
-        // Log top 10 historical scores for reference
-        foreach (var item in sorted.Take(10))
-        {
-            onProgress?.Invoke(
-                $"  HIST {item.Ip,-18} score={item.Score,6:F1} speed={item.SpeedKbS,6:F0}KB/s colo={item.Colo ?? "?",-6}");
-        }
-
-        return sorted.Select(x => new CfIpSource { Ip = x.Ip, SourceUrl = x.SourceUrl }).ToList();
+        var all = (await Task.WhenAll(downloads)).SelectMany(x => x).ToList();
+        var filtered = new HashSet<string>(FilterByCidrs(all.Select(x => x.Ip).Distinct().ToList(), cidrs));
+        return all.Where(x => filtered.Contains(x.Ip))
+            .GroupBy(x => x.Ip)
+            .Select(g => g.OrderByDescending(x => x.SpeedKbS).First())
+            .OrderByDescending(x => x.SpeedKbS)
+            .Select(x => new CfIpSource { Ip = x.Ip, SourceUrl = x.SourceUrl, HistoricalSpeedKBs = x.SpeedKbS })
+            .ToList();
     }
+
+    private static bool IsIpv4(string? ip) => IPAddress.TryParse(ip, out var parsed)
+        && parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork;
 
     // ══════════════════════════════════════════════════════════════════════
     // Phase 2: 常规 IP（IpSetUrls 正则提取 + DomainsSetUrl DNS 解析）
@@ -134,7 +107,8 @@ public class CfDataFetcher
     /// Fetch IPs from IpSetUrls and DomainsSetUrl, exclude already-probed IPs, filter by CF CIDRs, deduplicate.
     /// </summary>
     /// <param name="excludeIps">Phase 1 已探测的 IP（跳过）/ Phase 1 already-probed IPs to skip</param>
-    public async Task<List<CfIpSource>> FetchGeneralIpsAsync(HashSet<string> excludeIps, Action<string>? onProgress = null)
+    public async Task<List<CfIpSource>> FetchGeneralIpsAsync(HashSet<string> excludeIps, Action<string>? onProgress = null,
+        CancellationToken cancellationToken = default)
     {
         var ipToSource = new Dictionary<string, string>();  // IP → source URL
         var seen = new HashSet<string>();
@@ -150,9 +124,10 @@ public class CfDataFetcher
         {
             try
             {
-                var ips = await FetchIpsFromUrlAsync(url);
+                var ips = await FetchIpsFromUrlAsync(url, cancellationToken);
                 return (url, ips);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch { return (url, new List<string>()); }
         }).ToArray();
         var fetchResults = await Task.WhenAll(fetches);
@@ -169,8 +144,8 @@ public class CfDataFetcher
         if (_config.DomainsSetUrl.IsNotEmpty())
         {
             onProgress?.Invoke("Fetching and resolving domains...");
-            var domains = await FetchDomainsAsync(_config.DomainsSetUrl);
-            var resolved = await ResolveDomainsConcurrentWithSourceAsync(domains);
+            var domains = await FetchDomainsAsync(_config.DomainsSetUrl, cancellationToken);
+            var resolved = await ResolveDomainsConcurrentWithSourceAsync(domains, cancellationToken);
             foreach (var (ip, domain) in resolved)
             {
                 if (seen.Add(ip))
@@ -181,7 +156,7 @@ public class CfDataFetcher
         // ── Cloudflare CIDR 过滤 ──
         var allIpList = ipToSource.Keys.ToList();
         onProgress?.Invoke($"Filtering {allIpList.Count} IPs against Cloudflare CIDRs...");
-        var cidrs = await FetchCfCidrsAsync();
+        var cidrs = await GetCfCidrsAsync(cancellationToken);
         var filtered = FilterByCidrs(allIpList, cidrs);
 
         var result = filtered.Select(ip => new CfIpSource { Ip = ip, SourceUrl = ipToSource.GetValueOrDefault(ip) }).ToList();
@@ -197,16 +172,17 @@ public class CfDataFetcher
     /// 从 URL 获取内容，正则提取所有 IPv4 地址
     /// Fetch content from URL and extract all IPv4 addresses via regex
     /// </summary>
-    private async Task<List<string>> FetchIpsFromUrlAsync(string url)
+    private async Task<List<string>> FetchIpsFromUrlAsync(string url, CancellationToken cancellationToken)
     {
         try
         {
-            var content = await _httpClient.GetStringAsync(url);
+            var content = await _httpClient.GetStringAsync(url, cancellationToken);
             return _ipRegex.Matches(content)
                 .Select(m => m.Value)
                 .Distinct()
                 .ToList();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch
         {
             return [];
@@ -217,11 +193,11 @@ public class CfDataFetcher
     /// 从 API 获取域名列表（支持 JSON 数组 或 {"domains": [...]} 对象格式）
     /// Fetch domain list from API (supports JSON array or {"domains": [...]} object format)
     /// </summary>
-    private async Task<List<string>> FetchDomainsAsync(string url)
+    private async Task<List<string>> FetchDomainsAsync(string url, CancellationToken cancellationToken)
     {
         try
         {
-            var content = await _httpClient.GetStringAsync(url);
+            var content = await _httpClient.GetStringAsync(url, cancellationToken);
             var json = JsonNode.Parse(content);
             var domains = new List<string>();
 
@@ -244,6 +220,7 @@ public class CfDataFetcher
 
             return domains;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch
         {
             return [];
@@ -253,17 +230,18 @@ public class CfDataFetcher
     /// <summary>
     /// 并发 DNS 解析域名列表（20 并发，仅取 IPv4），返回 (ip, domain) 以追踪来源
     /// </summary>
-    private async Task<List<(string ip, string domain)>> ResolveDomainsConcurrentWithSourceAsync(List<string> domains)
+    private async Task<List<(string ip, string domain)>> ResolveDomainsConcurrentWithSourceAsync(List<string> domains,
+        CancellationToken cancellationToken)
     {
         var results = new ConcurrentBag<(string ip, string domain)>();
         var semaphore = new SemaphoreSlim(20);
 
         var tasks = domains.Select(async domain =>
         {
-            await semaphore.WaitAsync();
+            await semaphore.WaitAsync(cancellationToken);
             try
             {
-                var entries = await Dns.GetHostEntryAsync(domain);
+                var entries = await Dns.GetHostEntryAsync(domain, cancellationToken);
                 foreach (var addr in entries.AddressList)
                 {
                     if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
@@ -272,6 +250,7 @@ public class CfDataFetcher
                     }
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch { }
             finally
             {
@@ -287,11 +266,17 @@ public class CfDataFetcher
     /// 从 Cloudflare 官方 API 获取 IPv4 CIDR 列表，失败时回退到兜底列表
     /// Fetch IPv4 CIDRs from Cloudflare official API, fallback to built-in list on failure
     /// </summary>
-    private async Task<List<string>> FetchCfCidrsAsync()
+    private Task<List<string>> GetCfCidrsAsync(CancellationToken cancellationToken)
+    {
+        lock (_cidrLock)
+            return _cidrsTask ??= FetchCfCidrsAsync(cancellationToken);
+    }
+
+    private async Task<List<string>> FetchCfCidrsAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var content = await _httpClient.GetStringAsync("https://api.cloudflare.com/client/v4/ips");
+            var content = await _httpClient.GetStringAsync("https://api.cloudflare.com/client/v4/ips", cancellationToken);
             var json = JsonNode.Parse(content);
             var cidrs = new List<string>();
 
@@ -305,11 +290,12 @@ public class CfDataFetcher
                 }
             }
 
-            return cidrs.Count > 0 ? cidrs : _config.CfDefaultIpv4Cidrs;
+            return cidrs.Count > 0 ? cidrs : (_config.CfDefaultIpv4Cidrs is { Count: > 0 } ? _config.CfDefaultIpv4Cidrs : Global.CfDefaultIpv4Cidrs);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch
         {
-            return _config.CfDefaultIpv4Cidrs;
+            return _config.CfDefaultIpv4Cidrs is { Count: > 0 } ? _config.CfDefaultIpv4Cidrs : Global.CfDefaultIpv4Cidrs;
         }
     }
 
@@ -388,6 +374,7 @@ public class CfIpSource
 {
     public string Ip { get; set; } = string.Empty;
     public string? SourceUrl { get; set; }
+    public double HistoricalSpeedKBs { get; set; }
 }
 
 /// <summary>
