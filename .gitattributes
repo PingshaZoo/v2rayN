@@ -5,6 +5,7 @@
 
 # New Cloudflare tooling and documentation use UTF-8/LF without changing legacy files.
 docs/cloudflare-best-ip.md text eol=lf
+docs/superpowers/specs/2026-10-27-cloudflare-import-removal-design.md text eol=lf
 docs/superpowers/specs/2026-10-26-cloudflare-probe-repair-design.md text eol=lf
 v2rayN/ServiceLib.Tests/Handler/CloudflareBestIpTests.cs text eol=lf
 v2rayN/ServiceLib.Tests/Handler/CloudflareProbeHttpTests.cs text eol=lf
