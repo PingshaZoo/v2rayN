@@ -1924,9 +1924,6 @@
   <data name="TbCfBestIpOriginSpeedTestPath" xml:space="preserve">
     <value>速度测试路径</value>
   </data>
-  <data name="TbCfBestIpSelectedProtocol" xml:space="preserve">
-    <value>节点协议</value>
-  </data>
   <data name="TbCfBestIpProbeMode" xml:space="preserve">
     <value>探测模式</value>
   </data>
@@ -1948,17 +1945,11 @@
   <data name="TbCfBestIpWeightLoss" xml:space="preserve">
     <value>丢包权重</value>
   </data>
-  <data name="TbCfBestIpUuid" xml:space="preserve">
-    <value>UUID</value>
-  </data>
-  <data name="TbCfBestIpWsPath" xml:space="preserve">
-    <value>WS路径</value>
-  </data>
   <data name="TbCfBestIpRun" xml:space="preserve">
     <value>运行Cloudflare优选</value>
   </data>
   <data name="TbCfBestIpRunTip" xml:space="preserve">
-    <value>探测 Cloudflare CDN IP；达标结果需手动导入</value>
+    <value>探测 Cloudflare CDN IP 并查看优选结果</value>
   </data>
   <data name="FillCfBestIpOriginSniList" xml:space="preserve">
     <value>请填写源站域名列表（至少一个）</value>

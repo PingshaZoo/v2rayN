@@ -25,20 +25,13 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
     [Reactive] public partial double WeightLatency { get; set; }
     [Reactive] public partial double WeightLoss { get; set; }
     [Reactive] public partial bool VerifyCertificate { get; set; }
-    [Reactive] public partial string SelectedProtocol { get; set; }
-    [Reactive] public partial string Credential { get; set; }
-    [Reactive] public partial string WsPath { get; set; }
-    [Reactive] public partial CfProfileTemplate? SelectedTemplate { get; set; }
     [Reactive] public partial bool IsRunning { get; set; }
     [Reactive] public partial bool IsBusy { get; set; }
-    [Reactive] public partial bool Imported { get; set; }
     [Reactive] public partial double ProgressPercent { get; set; }
     [Reactive] public partial string StatusText { get; set; }
 
-    public ObservableCollection<CfProfileTemplate> Templates { get; } = [];
     public ObservableCollection<CfProbeResult> Results { get; } = [];
     public string[] Modes { get; } = ["full", "edge"];
-    public string[] Protocols { get; } = ["vless", "vmess", "trojan"];
 
     public CloudflareBestIpViewModel() : this(AppManager.Instance.Config) { }
 
@@ -63,27 +56,7 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
         WeightLatency = c.WeightLatency;
         WeightLoss = c.WeightLoss;
         VerifyCertificate = c.OriginVerifyCert;
-        SelectedProtocol = c.SelectedProtocol;
-        Credential = c.Uuid;
-        WsPath = c.WsPath;
         StatusText = CfUi.InitialStatus;
-        Templates.Add(new CfProfileTemplate { DisplayName = CfUi.ManualTemplate, IndexId = "" });
-        SelectedTemplate = Templates[0];
-        _ = LoadTemplatesAsync(c.TemplateIndexId);
-    }
-
-    private async Task LoadTemplatesAsync(string? preferred)
-    {
-        try
-        {
-            var nodes = await AppManager.Instance.ProfileItems(string.Empty) ?? [];
-            foreach (var node in nodes.Where(n => n.StreamSecurity == Global.StreamSecurity
-                && n.ConfigType is EConfigType.VLESS or EConfigType.VMess or EConfigType.Trojan && n.IsValid()))
-                Templates.Add(new CfProfileTemplate { IndexId = node.IndexId,
-                    DisplayName = $"{node.Remarks} · {node.ConfigType} · {node.Sni}" });
-            SelectedTemplate = Templates.FirstOrDefault(t => t.IndexId == preferred) ?? Templates[0];
-        }
-        catch { SelectedTemplate = Templates[0]; }
     }
 
     private CfBestIpItem Snapshot()
@@ -106,10 +79,6 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
         c.WeightLatency = WeightLatency;
         c.WeightLoss = WeightLoss;
         c.OriginVerifyCert = VerifyCertificate;
-        c.SelectedProtocol = SelectedProtocol;
-        c.Uuid = Credential.Trim();
-        c.WsPath = WsPath.Trim();
-        c.TemplateIndexId = SelectedTemplate?.IndexId ?? "";
         return c;
     }
 
@@ -140,7 +109,6 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
         if (await ConfigHandler.SaveConfig(_config) != 0) { StatusText = CfUi.T("配置保存失败。", "Could not save settings."); return; }
         IsRunning = true;
         IsBusy = true;
-        Imported = false;
         _run = null;
         Results.Clear();
         ProgressPercent = 0;
@@ -165,27 +133,6 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
     }
 
     public void Stop() => _runCancellation?.Cancel();
-
-    public async Task ImportAsync()
-    {
-        if (IsBusy || _run is null || _run.TopResults.Count == 0) { StatusText = CfUi.T("请先完成测速并取得达标结果。", "Complete a probe with qualified results first."); return; }
-        IsBusy = true;
-        try
-        {
-            var settings = Snapshot();
-            ProfileItem? template = null;
-            if (!string.IsNullOrWhiteSpace(SelectedTemplate?.IndexId))
-                template = await AppManager.Instance.GetProfileItem(SelectedTemplate.IndexId);
-            if (!string.IsNullOrWhiteSpace(SelectedTemplate?.IndexId) && template is null)
-                throw new ArgumentException(CfUi.T("选中的模板节点已不存在。", "The selected template no longer exists."));
-            var added = await new CfResultExporter(settings).ImportAsync(_config, _run, template);
-            Imported = true;
-            StatusText = CfUi.T($"已导入 {added} 个新节点；重复节点已跳过。",
-                $"Imported {added} new profiles; duplicates were skipped.");
-        }
-        catch (Exception ex) { StatusText = CfUi.T($"导入失败：{ex.Message}", $"Import failed: {ex.Message}"); }
-        finally { IsBusy = false; }
-    }
 
     public async Task PostAsync()
     {

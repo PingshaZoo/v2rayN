@@ -21,13 +21,13 @@
 - Routing rules and DNS configuration
 - Speed and latency testing
 - TUN mode support
-- **Cloudflare Best IP** — probe Cloudflare CDN IPs and import qualified nodes on demand
+- **Cloudflare Best IP** — probe Cloudflare CDN IPs and inspect ranked results
 
 ## Cloudflare Best IP
 
 Open "Cloudflare Best IP" from the menu. Supply your own SNI hostname, test paths, and IP/domain sources; only public Cloudflare IPv4 ranges are built in. Start or stop the probe in its own window and inspect the ranked results.
 
-Probing needs no proxy-node credentials. To use a qualified IP, choose an existing TLS profile or enter your own credentials, then click **Import profiles**. Results are sent to your report URL only when you click **Report**. See the [Cloudflare Best IP guide](docs/cloudflare-best-ip.md) for formats and troubleshooting.
+Probing needs no proxy-node credentials and does not create profiles. Results are sent to your report URL only when you click **Report**. See the [Cloudflare Best IP guide](docs/cloudflare-best-ip.md) for formats and troubleshooting.
 
 
 ---

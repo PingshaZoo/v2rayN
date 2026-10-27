@@ -767,7 +767,6 @@ public partial class MainWindowViewModel : MyReactiveObject
         if (_config == null) return;
         var vm = new CloudflareBestIpViewModel(_config);
         await AppManager.Instance.WindowDialog.ShowDialogAsync(vm);
-        if (vm.Imported) await RefreshServers();
     }
 
     private void ReloadResult(bool showClashUI)

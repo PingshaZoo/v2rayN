@@ -316,7 +316,6 @@ public class CfBestIpItem
     public int TopN { get; set; } = 10;
     public int LowestSpeed { get; set; } = 500;
     public int SpeedTestDuration { get; set; } = 10;
-    public string TemplateIndexId { get; set; } = string.Empty;
     public double WeightLatency { get; set; } = 1;
     public double WeightLoss { get; set; } = 1;
     public double LossPenaltyMs { get; set; } = 3000;
@@ -326,7 +325,4 @@ public class CfBestIpItem
     public string OriginSpeedTestPath { get; set; }
     public bool OriginVerifyCert { get; set; }
     public List<string> CfDefaultIpv4Cidrs { get; set; } = [];
-    public string SelectedProtocol { get; set; } = "vless";
-    public string Uuid { get; set; } = string.Empty;
-    public string WsPath { get; set; } = "/";
 }

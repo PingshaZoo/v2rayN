@@ -37,18 +37,6 @@
                         <TextBlock Margin="0,12,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{x:Static cfui:CfUi.SourceHelp}"/>
                     </StackPanel></ScrollViewer>
                 </TabItem>
-                <TabItem Header="{x:Static cfui:CfUi.ImportTab}">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="10">
-                        <TextBlock Text="{x:Static cfui:CfUi.Template}" Margin="0,4"/><ComboBox ItemsSource="{Binding Templates}" SelectedItem="{Binding SelectedTemplate}"/>
-                        <TextBlock Margin="0,10,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{x:Static cfui:CfUi.TemplateHelp}"/>
-                        <Separator Margin="0,14"/>
-                        <TextBlock Text="{x:Static cfui:CfUi.ManualTitle}" FontWeight="SemiBold"/>
-                        <TextBlock Text="{x:Static cfui:CfUi.Protocol}" Margin="0,12,0,4"/><ComboBox ItemsSource="{Binding Protocols}" SelectedItem="{Binding SelectedProtocol}"/>
-                        <TextBlock Text="{x:Static cfui:CfUi.Credential}" Margin="0,12,0,4"/><TextBox Text="{Binding Credential}"/>
-                        <TextBlock Text="{x:Static cfui:CfUi.WsPath}" Margin="0,12,0,4"/><TextBox Text="{Binding WsPath}"/>
-                        <TextBlock Margin="0,12,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{x:Static cfui:CfUi.CredentialHelp}"/>
-                    </StackPanel></ScrollViewer>
-                </TabItem>
                 <TabItem Header="{x:Static cfui:CfUi.AdvancedTab}">
                     <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="10">
                         <TextBlock Text="{x:Static cfui:CfUi.Timeout}" Margin="0,4"/><TextBox Text="{Binding Timeout}"/>
@@ -82,7 +70,6 @@
             <Button x:Name="btnSave" Content="{x:Static cfui:CfUi.Save}" MinWidth="85" Margin="4"/>
             <Button x:Name="btnStart" Content="{x:Static cfui:CfUi.Start}" MinWidth="85" Margin="4"/>
             <Button x:Name="btnStop" Content="{x:Static cfui:CfUi.Stop}" IsEnabled="{Binding IsRunning}" MinWidth="70" Margin="4"/>
-            <Button x:Name="btnImport" Content="{x:Static cfui:CfUi.ImportNodes}" MinWidth="85" Margin="4"/>
             <Button x:Name="btnPost" Content="{x:Static cfui:CfUi.Post}" MinWidth="70" Margin="4"/>
             <Button x:Name="btnClose" Content="{x:Static cfui:CfUi.Close}" MinWidth="70" Margin="4"/>
         </StackPanel>

@@ -11,7 +11,6 @@ public partial class CloudflareBestIpWindow : WindowBase<CloudflareBestIpViewMod
         btnSave.Click += async (_, _) => { if (ViewModel is not null) await ViewModel.SaveAsync(); };
         btnStart.Click += async (_, _) => { if (ViewModel is not null) await ViewModel.StartAsync(); };
         btnStop.Click += (_, _) => ViewModel?.Stop();
-        btnImport.Click += async (_, _) => { if (ViewModel is not null) await ViewModel.ImportAsync(); };
         btnPost.Click += async (_, _) => { if (ViewModel is not null) await ViewModel.PostAsync(); };
         btnClose.Click += (_, _) => Close();
         Closed += (_, _) => ViewModel?.Stop();

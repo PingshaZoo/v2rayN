@@ -30,10 +30,3 @@ public record CfProbeProgress(string Stage, int Completed, int Total, int Qualif
 }
 
 public record CfProbeRunResult(List<CfProbeResult> Results, List<CfProbeResult> TopResults);
-
-public class CfProfileTemplate
-{
-    public string IndexId { get; init; } = string.Empty;
-    public string DisplayName { get; init; } = string.Empty;
-    public override string ToString() => DisplayName;
-}

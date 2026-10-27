@@ -78,40 +78,20 @@ public class CloudflareBestIpTests
     }
 
     [Test]
-    public async Task ImportPreparationRejectsMissingCredentialsAndCanReuseTemplate()
+    public async Task LegacyImportSettingsAreIgnoredWithoutLosingProbeSettings()
     {
-        var settings = new CfBestIpItem { SelectedProtocol = "vless", Uuid = "" };
-        var result = Result("104.16.0.1", 800, 20, 0);
-        var exporter = new CfResultExporter(settings);
-        var rejected = false;
-        try { exporter.ExportAsProfileItems([result]); }
-        catch (ArgumentException) { rejected = true; }
-        await rejected.Should().BeTrue();
+        const string legacy = """
+            {"TopN":7,"OriginSniList":["example.com"],"PostUrls":["https://example.com/report"],
+             "TemplateIndexId":"old-template","SelectedProtocol":"vless","Uuid":"old-credential","WsPath":"/ws"}
+            """;
+        var settings = JsonUtils.Deserialize<CfBestIpItem>(legacy)!;
+        await settings.TopN.Should().BeEqualTo(7);
+        await settings.OriginSniList.Should().Contain("example.com");
+        await settings.PostUrls.Should().Contain("https://example.com/report");
 
-        var template = new ProfileItem
-        {
-            ConfigType = EConfigType.Trojan, Password = "user-password", Address = "example.com",
-            Port = 443, StreamSecurity = Global.StreamSecurity, Sni = "example.com",
-            Network = "ws"
-        };
-        result.Sni = "example.com";
-        var nodes = exporter.ExportAsProfileItems([result], template);
-        await nodes.Count.Should().BeEqualTo(1);
-        await nodes[0].Password.Should().BeEqualTo("user-password");
-        await nodes[0].Address.Should().BeEqualTo("104.16.0.1");
-        await template.Address.Should().BeEqualTo("example.com");
-    }
-
-    [Test]
-    public async Task ImportedNodeIdentityIsStableAndIncludesTransport()
-    {
-        var settings = new CfBestIpItem { SelectedProtocol = "vless", Uuid = Guid.NewGuid().ToString(), WsPath = "/a" };
-        var result = Result("104.16.0.1", 800, 20, 0);
-        var node = new CfResultExporter(settings).ExportAsProfileItems([result])[0];
-        var first = CfResultExporter.StableNodeId(node, "manual");
-        await CfResultExporter.StableNodeId(node, "manual").Should().BeEqualTo(first);
-        node.SetTransportExtra(node.GetTransportExtra() with { Path = "/b" });
-        await (CfResultExporter.StableNodeId(node, "manual") != first).Should().BeTrue();
+        var saved = JsonUtils.Serialize(settings);
+        foreach (var oldKey in new[] { "TemplateIndexId", "SelectedProtocol", "Uuid", "WsPath" })
+            await saved.Contains($"\"{oldKey}\"", StringComparison.Ordinal).Should().BeFalse();
     }
 
     [Test]

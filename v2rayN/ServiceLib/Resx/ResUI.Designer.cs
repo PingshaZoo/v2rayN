@@ -5454,12 +5454,6 @@ namespace ServiceLib.Resx {
             }
         }
 
-        public static string TbCfBestIpSelectedProtocol {
-            get {
-                return ResourceManager.GetString("TbCfBestIpSelectedProtocol", resourceCulture);
-            }
-        }
-
         public static string TbCfBestIpProbeMode {
             get {
                 return ResourceManager.GetString("TbCfBestIpProbeMode", resourceCulture);
@@ -5499,18 +5493,6 @@ namespace ServiceLib.Resx {
         public static string TbCfBestIpWeightLoss {
             get {
                 return ResourceManager.GetString("TbCfBestIpWeightLoss", resourceCulture);
-            }
-        }
-
-        public static string TbCfBestIpUuid {
-            get {
-                return ResourceManager.GetString("TbCfBestIpUuid", resourceCulture);
-            }
-        }
-
-        public static string TbCfBestIpWsPath {
-            get {
-                return ResourceManager.GetString("TbCfBestIpWsPath", resourceCulture);
             }
         }
 

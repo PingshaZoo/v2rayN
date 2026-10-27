@@ -194,7 +194,6 @@ public static class ConfigHandler
         config.CfBestIpItem.OriginSniList ??= [];
         if (config.CfBestIpItem.CfDefaultIpv4Cidrs is not { Count: > 0 })
             config.CfBestIpItem.CfDefaultIpv4Cidrs = [.. Global.CfDefaultIpv4Cidrs];
-        config.CfBestIpItem.WsPath ??= "/";
         if (config.CfBestIpItem.ProbeRepeat < 1)
         {
             config.CfBestIpItem.ProbeRepeat = 2;
