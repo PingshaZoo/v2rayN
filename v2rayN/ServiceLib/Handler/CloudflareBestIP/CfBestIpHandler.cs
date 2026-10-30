@@ -7,22 +7,48 @@ public class CfBestIpHandler
     private const int SpeedPassTarget = 20;
 
     public async Task<CfProbeRunResult> RunAsync(Config config, IProgress<CfProbeProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, IProgress<string>? logProgress = null)
+    {
+        var log = new CfProbeLog(message => logProgress?.Report(message));
+        log.Write(CfUi.T("开始测速", "Probe started"));
+        try
+        {
+            var result = await RunCoreAsync(config, progress, cancellationToken, log);
+            log.Write(CfUi.T($"测速完成：{result.Results.Count} 个有效响应，{result.TopResults.Count} 个入选结果",
+                $"Probe complete: {result.Results.Count} valid responses, {result.TopResults.Count} top results"));
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            log.Write(CfUi.T("测速已停止", "Probe stopped"));
+            throw;
+        }
+        catch (Exception ex)
+        {
+            log.Write(CfUi.T($"测速失败：{ex}", $"Probe failed: {ex}"));
+            throw;
+        }
+    }
+
+    private async Task<CfProbeRunResult> RunCoreAsync(Config config, IProgress<CfProbeProgress>? progress,
+        CancellationToken cancellationToken, CfProbeLog log)
     {
         var settings = config.CfBestIpItem ?? throw new ArgumentException(CfUi.T("Cloudflare 设置不存在", "Cloudflare settings are missing"));
         var error = CfProbeValidation.Validate(settings);
         if (error is not null) throw new ArgumentException(error);
-        using var fetcher = new CfDataFetcher(settings);
-        var batch = new CfIpBatchProber(settings);
+        cancellationToken.ThrowIfCancellationRequested();
+        using var fetcher = new CfDataFetcher(settings, onLog: log.Write);
+        var batch = new CfIpBatchProber(settings, onLog: log.Write);
         var scorer = new CfIpScorer(settings);
         var all = new List<CfProbeResult>();
         var target = Math.Max(SpeedPassTarget, settings.TopN);
+        log.Write($"mode={settings.ProbeMode}, SNI={string.Join(", ", settings.OriginSniList)}, repeat={settings.ProbeRepeat}, timeout={settings.Timeout}s, minimum={settings.LowestSpeed} KB/s, target={target}");
 
         progress?.Report(new("source", 0, 0, 0, CfUi.T("正在获取数据源…", "Fetching sources…")));
         var historicalTask = fetcher.FetchHistoricalIpsAsync(
-            message => progress?.Report(new("source", 0, 0, 0, message)), cancellationToken);
+            message => { log.Write(message); progress?.Report(new("source", 0, 0, 0, message)); }, cancellationToken);
         var generalTask = fetcher.FetchGeneralIpsAsync([],
-            message => progress?.Report(new("source", 0, 0, 0, message)), cancellationToken);
+            message => { log.Write(message); progress?.Report(new("source", 0, 0, 0, message)); }, cancellationToken);
         await Task.WhenAll(historicalTask, generalTask);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -33,9 +59,14 @@ public class CfBestIpHandler
         var remaining = historical.Where(s => seen.Add(s.Ip)).ToList();
         var general = remaining.Concat(generalTask.Result.Where(s => !seen.Contains(s.Ip)))
             .DistinctBy(s => s.Ip).ToList();
+        log.Write(CfUi.T($"候选 IP：历史优先 {prioritized.Count}，常规 {general.Count}",
+            $"Candidates: historical priority {prioritized.Count}, general {general.Count}"));
+        if (prioritized.Count + general.Count == 0)
+            log.Write(CfUi.T("无候选 IP：请检查数据源请求、解析和 CIDR 过滤日志", "No candidates: check source requests, parsing and CIDR filtering logs"));
 
         if (prioritized.Count > 0)
         {
+            log.Write(CfUi.T("开始历史 IP 延迟探测及串行测速", "Starting historical latency and serial download probes"));
             progress?.Report(new("latency", 0, prioritized.Count, 0, CfUi.T("历史 IP 延迟探测", "Historical IP latency")));
             var results = await batch.ProbeLatencyAsync(prioritized,
                 (done, total) => progress?.Report(new("latency", done, total, 0, CfUi.T("历史 IP 延迟探测", "Historical IP latency"))), cancellationToken);
@@ -52,6 +83,8 @@ public class CfBestIpHandler
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var sources = general.Skip(start).Take(100).ToList();
+                log.Write(CfUi.T($"开始常规 IP 批次：{start + 1}–{start + sources.Count}/{general.Count}",
+                    $"Starting general batch: {start + 1}–{start + sources.Count}/{general.Count}"));
                 var results = await batch.ProbeLatencyAsync(sources,
                     (done, total) => progress?.Report(new("latency", start + done, general.Count,
                         all.Count(r => CfIpScorer.IsQualified(r, settings)), CfUi.T("常规 IP 延迟探测", "General IP latency"))), cancellationToken);

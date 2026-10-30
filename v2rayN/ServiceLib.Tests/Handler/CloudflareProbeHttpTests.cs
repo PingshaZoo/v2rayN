@@ -18,7 +18,8 @@ public class CloudflareProbeHttpTests
             ProbeRepeat = 2, SleepInterval = 0, Timeout = 3, SpeedTestDuration = 2,
             OriginVerifyCert = false
         };
-        var prober = new CfIpProber(settings);
+        var logs = new List<string>();
+        var prober = new CfIpProber(settings, logs.Add);
         CfProbeResult? result;
         try { result = await prober.ProbeLatencyOnlyAsync("127.0.0.1", server.Port); }
         catch (Exception ex) { throw new InvalidOperationException($"{ex.Message}\nSERVER: {string.Join(" | ", server.Errors)}", ex); }
@@ -36,12 +37,14 @@ public class CloudflareProbeHttpTests
         await (speed > 2 && speed < 20).Should().BeTrue();
 
         settings.OriginTestPath = "/bad";
-        var bad = await new CfIpProber(settings).ProbeLatencyOnlyAsync("127.0.0.1", server.Port);
+        var bad = await new CfIpProber(settings, logs.Add).ProbeLatencyOnlyAsync("127.0.0.1", server.Port);
         await (bad is null).Should().BeTrue();
+        await logs.Any(line => line.Contains("127.0.0.1") && line.Contains("HTTP 503") && line.Contains("SNI=localhost")).Should().BeTrue();
 
         settings.OriginSpeedTestPath = "/truncated";
-        var truncated = await new CfIpProber(settings).ProbeSpeedOnlyAsync("127.0.0.1", "HKG", server.Port);
+        var truncated = await new CfIpProber(settings, logs.Add).ProbeSpeedOnlyAsync("127.0.0.1", "HKG", server.Port);
         await truncated.Should().BeEqualTo(0);
+        await logs.Any(line => line.Contains("download:")).Should().BeTrue();
 
         settings.ProbeMode = "edge";
         var edge = await new CfIpProber(settings).ProbeLatencyOnlyAsync("127.0.0.1", server.Port);

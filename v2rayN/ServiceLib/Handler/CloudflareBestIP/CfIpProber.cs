@@ -5,7 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace ServiceLib.Handler.CloudflareBestIP;
 
-public class CfIpProber(CfBestIpItem config)
+public class CfIpProber(CfBestIpItem config, Action<string>? onLog = null)
 {
     private readonly ConcurrentDictionary<string, string> _coloCache = new();
 
@@ -44,6 +44,8 @@ public class CfIpProber(CfBestIpItem config)
                 cancellationToken.ThrowIfCancellationRequested();
                 var sample = await ProbeOnceAsync(address, port, sni, config.ProbeMode == "edge" ? null : config.OriginTestPath,
                     false, null, cancellationToken);
+                if (!sample.HttpOk)
+                    onLog?.Invoke($"{ip}:{port} SNI={sni} latency {repeat + 1}/{config.ProbeRepeat}: {sample.Error} (TCP={sample.TcpOk}, TLS={sample.TlsOk}, HTTP={sample.HttpOk})");
                 if (sample.TcpOk) tcpOk++;
                 if (sample.TlsOk) tlsOk++;
                 if (sample.HttpOk)
@@ -86,6 +88,8 @@ public class CfIpProber(CfBestIpItem config)
         sni ??= config.OriginSniList.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(sni)) return 0;
         var sample = await ProbeOnceAsync(address, port, sni, config.OriginSpeedTestPath, true, knownColo, cancellationToken);
+        if (!sample.HttpOk)
+            onLog?.Invoke($"{ip}:{port} SNI={sni} download: {sample.Error} (TCP={sample.TcpOk}, TLS={sample.TlsOk}, HTTP={sample.HttpOk})");
         return sample.HttpOk ? sample.SpeedKBs : 0;
     }
 

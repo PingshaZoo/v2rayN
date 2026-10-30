@@ -7,6 +7,8 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
 {
     private CancellationTokenSource? _runCancellation;
     private CfProbeRunResult? _run;
+    private readonly Queue<string> _logLines = new();
+    private const int MaxLogLines = 1000;
 
     [Reactive] public partial string SniText { get; set; }
     [Reactive] public partial string TestPath { get; set; }
@@ -29,6 +31,17 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
     [Reactive] public partial bool IsBusy { get; set; }
     [Reactive] public partial double ProgressPercent { get; set; }
     [Reactive] public partial string StatusText { get; set; }
+    [Reactive] public partial string LogText { get; set; } = "";
+
+    public string LogLocation => CfUi.T($"文件日志：{Utils.GetLogPath()}（需启用程序日志）；界面保留最近 {MaxLogLines} 条。",
+        $"File logs: {Utils.GetLogPath()} (requires application logging); the window retains the latest {MaxLogLines} lines.");
+
+    private void AppendLog(string line)
+    {
+        _logLines.Enqueue(line);
+        while (_logLines.Count > MaxLogLines) _logLines.Dequeue();
+        LogText = string.Join(Environment.NewLine, _logLines);
+    }
 
     public ObservableCollection<CfProbeResult> Results { get; } = [];
     public string[] Modes { get; } = ["full", "edge"];
@@ -120,7 +133,8 @@ public partial class CloudflareBestIpViewModel : MyReactiveObject
                 StatusText = $"{p.Message} · {p.Completed}/{p.Total} · {CfUi.T("达标", "qualified")} {p.Qualified}";
                 ProgressPercent = p.Percent;
             });
-            _run = await CfBestIpHandler.Instance.RunAsync(_config, progress, _runCancellation.Token);
+            var logs = new Progress<string>(AppendLog);
+            _run = await CfBestIpHandler.Instance.RunAsync(_config, progress, _runCancellation.Token, logs);
             foreach (var row in _run.Results.OrderByDescending(r => r.DownloadSpeedKBs)
                 .ThenBy(r => r.AvgLatencyMs)) Results.Add(row);
             StatusText = CfUi.T($"测速完成：{_run.TopResults.Count} 个达标，共 {Results.Count} 个有效响应。",

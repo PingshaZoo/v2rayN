@@ -8,6 +8,7 @@ public static class CfUi
     public static string ProbeTab => Zh ? "测速" : "Probe";
     public static string SourcesTab => Zh ? "数据源" : "Sources";
     public static string AdvancedTab => Zh ? "高级" : "Advanced";
+    public static string LogHistory => Zh ? "测速历史日志（可选择复制）" : "Probe history (select to copy)";
     public static string Sni => Zh ? "SNI 域名（每行一个）" : "SNI hostnames (one per line)";
     public static string TestPath => Zh ? "测速路径（应返回 HTTP 200）" : "Latency path (must return HTTP 200)";
     public static string SpeedPath => Zh ? "下载路径（未压缩文件）" : "Download path (uncompressed file)";

@@ -19,15 +19,17 @@ public class CfDataFetcher : IDisposable
     private readonly bool _ownsClient;
     private readonly object _cidrLock = new();
     private Task<List<string>>? _cidrsTask;
+    private readonly Action<string>? _onLog;
 
     // 预编译正则：匹配 IPv4 地址 / compiled regex: match IPv4 addresses
     private static readonly Regex _ipRegex = new(
         @"\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))\b",
         RegexOptions.Compiled);
 
-    public CfDataFetcher(CfBestIpItem config, HttpClient? httpClient = null)
+    public CfDataFetcher(CfBestIpItem config, HttpClient? httpClient = null, Action<string>? onLog = null)
     {
         _config = config;
+        _onLog = onLog;
         _ownsClient = httpClient is null;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
     }
@@ -60,10 +62,15 @@ public class CfDataFetcher : IDisposable
         {
             try
             {
+                _onLog?.Invoke($"Historical source: {url}");
                 var content = await _httpClient.GetStringAsync(url, cancellationToken);
                 var array = JsonNode.Parse(content) as JsonArray;
                 var items = new List<CfHistoricalIpItem>();
-                if (array is null) return items;
+                if (array is null)
+                {
+                    _onLog?.Invoke($"{url}: invalid historical JSON (expected array)");
+                    return items;
+                }
                 foreach (var row in array)
                 {
                     try
@@ -76,7 +83,7 @@ public class CfDataFetcher : IDisposable
                             && double.IsFinite(parsed) && parsed > 0 ? parsed : 0;
                         items.Add(new CfHistoricalIpItem { Ip = ip!, SpeedKbS = speed, SourceUrl = url });
                     }
-                    catch { /* One malformed row must not discard the feed. */ }
+                    catch (Exception ex) { _onLog?.Invoke($"{url}: skipped malformed historical row: {ex.Message}"); }
                 }
                 onProgress?.Invoke($"{url}: {items.Count} 条历史结果");
                 return items;
@@ -86,12 +93,14 @@ public class CfDataFetcher : IDisposable
         });
         var all = (await Task.WhenAll(downloads)).SelectMany(x => x).ToList();
         var filtered = new HashSet<string>(FilterByCidrs(all.Select(x => x.Ip).Distinct().ToList(), cidrs));
-        return all.Where(x => filtered.Contains(x.Ip))
+        var result = all.Where(x => filtered.Contains(x.Ip))
             .GroupBy(x => x.Ip)
             .Select(g => g.OrderByDescending(x => x.SpeedKbS).First())
             .OrderByDescending(x => x.SpeedKbS)
             .Select(x => new CfIpSource { Ip = x.Ip, SourceUrl = x.SourceUrl, HistoricalSpeedKBs = x.SpeedKbS })
             .ToList();
+        onProgress?.Invoke($"Historical IPs: {all.Count} parsed, {result.Count} after dedup & CIDR filter");
+        return result;
     }
 
     private static bool IsIpv4(string? ip) => IPAddress.TryParse(ip, out var parsed)
@@ -125,10 +134,11 @@ public class CfDataFetcher : IDisposable
             try
             {
                 var ips = await FetchIpsFromUrlAsync(url, cancellationToken);
+                onProgress?.Invoke($"{url}: {ips.Count} IPs parsed");
                 return (url, ips);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch { return (url, new List<string>()); }
+            catch (Exception ex) { _onLog?.Invoke($"{url}: {ex.Message}"); return (url, new List<string>()); }
         }).ToArray();
         var fetchResults = await Task.WhenAll(fetches);
         foreach (var (url, ips) in fetchResults)
@@ -176,6 +186,7 @@ public class CfDataFetcher : IDisposable
     {
         try
         {
+            _onLog?.Invoke($"Fetching IP source: {url}");
             var content = await _httpClient.GetStringAsync(url, cancellationToken);
             return _ipRegex.Matches(content)
                 .Select(m => m.Value)
@@ -183,8 +194,9 @@ public class CfDataFetcher : IDisposable
                 .ToList();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch
+        catch (Exception ex)
         {
+            _onLog?.Invoke($"{url}: IP source failed: {ex.Message}");
             return [];
         }
     }
@@ -197,6 +209,7 @@ public class CfDataFetcher : IDisposable
     {
         try
         {
+            _onLog?.Invoke($"Fetching domain source: {url}");
             var content = await _httpClient.GetStringAsync(url, cancellationToken);
             var json = JsonNode.Parse(content);
             var domains = new List<string>();
@@ -218,11 +231,13 @@ public class CfDataFetcher : IDisposable
                 }
             }
 
+            _onLog?.Invoke($"{url}: {domains.Count} domains parsed");
             return domains;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch
+        catch (Exception ex)
         {
+            _onLog?.Invoke($"{url}: domain source failed: {ex.Message}");
             return [];
         }
     }
@@ -234,7 +249,7 @@ public class CfDataFetcher : IDisposable
         CancellationToken cancellationToken)
     {
         var results = new ConcurrentBag<(string ip, string domain)>();
-        var semaphore = new SemaphoreSlim(20);
+        using var semaphore = new SemaphoreSlim(20);
 
         var tasks = domains.Select(async domain =>
         {
@@ -242,6 +257,7 @@ public class CfDataFetcher : IDisposable
             try
             {
                 var entries = await Dns.GetHostEntryAsync(domain, cancellationToken);
+                _onLog?.Invoke($"DNS {domain}: {string.Join(", ", entries.AddressList.Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork))}");
                 foreach (var addr in entries.AddressList)
                 {
                     if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
@@ -251,7 +267,7 @@ public class CfDataFetcher : IDisposable
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch { }
+            catch (Exception ex) { _onLog?.Invoke($"DNS {domain}: {ex.Message}"); }
             finally
             {
                 semaphore.Release();
@@ -276,6 +292,7 @@ public class CfDataFetcher : IDisposable
     {
         try
         {
+            _onLog?.Invoke("Fetching Cloudflare CIDR ranges");
             var content = await _httpClient.GetStringAsync("https://api.cloudflare.com/client/v4/ips", cancellationToken);
             var json = JsonNode.Parse(content);
             var cidrs = new List<string>();
@@ -290,11 +307,14 @@ public class CfDataFetcher : IDisposable
                 }
             }
 
+            _onLog?.Invoke(cidrs.Count > 0 ? $"Cloudflare CIDR: {cidrs.Count} ranges fetched"
+                : "Cloudflare CIDR: empty response, using built-in fallback");
             return cidrs.Count > 0 ? cidrs : (_config.CfDefaultIpv4Cidrs is { Count: > 0 } ? _config.CfDefaultIpv4Cidrs : Global.CfDefaultIpv4Cidrs);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch
+        catch (Exception ex)
         {
+            _onLog?.Invoke($"Cloudflare CIDR: {ex.Message}; using built-in fallback");
             return _config.CfDefaultIpv4Cidrs is { Count: > 0 } ? _config.CfDefaultIpv4Cidrs : Global.CfDefaultIpv4Cidrs;
         }
     }

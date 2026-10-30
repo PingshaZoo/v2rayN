@@ -5,6 +5,65 @@ namespace ServiceLib.Tests.Handler;
 public class CloudflareBestIpTests
 {
     [Test]
+    public async Task ProbeLogWritesMatchingOrderedLinesToBothSinks()
+    {
+        var history = new List<string>();
+        var file = new List<string>();
+        var log = new CfProbeLog(history.Add, file.Add);
+        await Task.WhenAll(Enumerable.Range(0, 100).Select(i => Task.Run(() => log.Write($"result {i}\r\nnext"))));
+        await history.Count.Should().BeEqualTo(100);
+        await history.SequenceEqual(file).Should().BeTrue();
+        await history.All(line => line.Contains("[CloudflareBestIp]") && !line.Contains('\n') && !line.Contains('\r')).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task FailedSourcesAndCidrFallbackAreVisibleInLogs()
+    {
+        var logs = new ConcurrentBag<string>();
+        var settings = new CfBestIpItem
+        {
+            HavePostRes = ["https://test.local/history"],
+            IpSetUrls = ["https://test.local/ips"],
+            DomainsSetUrl = "https://test.local/domains"
+        };
+        using var client = new HttpClient(new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+        using var fetcher = new CfDataFetcher(settings, client, logs.Add);
+        var history = await fetcher.FetchHistoricalIpsAsync(logs.Add);
+        var general = await fetcher.FetchGeneralIpsAsync([], logs.Add);
+        await history.Count.Should().BeEqualTo(0);
+        await general.Count.Should().BeEqualTo(0);
+        foreach (var expected in new[] { "built-in fallback", "/history: ", "/ips: IP source failed", "/domains: domain source failed", "Final IP count" })
+            await logs.Any(line => line.Contains(expected)).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task CancelledProbeRetainsStartAndStopHistory()
+    {
+        var logs = new List<string>();
+        var config = new Config
+        {
+            CfBestIpItem = new CfBestIpItem
+            {
+                OriginSniList = ["test.local"], OriginTestPath = "/ok", OriginSpeedTestPath = "/speed",
+                IpSetUrls = ["https://test.local/ips"]
+            }
+        };
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var didCancel = false;
+        try { await new CfBestIpHandler().RunAsync(config, cancellationToken: cancelled.Token, logProgress: new ImmediateProgress(logs.Add)); }
+        catch (OperationCanceledException) { didCancel = true; }
+        await didCancel.Should().BeTrue();
+        await logs.Count.Should().BeGreaterThan(1);
+        await logs.Any(line => line.Contains("Probe stopped") || line.Contains("测速已停止")).Should().BeTrue();
+    }
+
+    private sealed class ImmediateProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
+    }
+
+    [Test]
     public async Task FreshConfigurationContainsOnlyPublicCidrs()
     {
         var config = new CfBestIpItem();
